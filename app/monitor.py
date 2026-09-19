@@ -7,39 +7,38 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.casper_client import CasperClient
+from app.browser_monitor import BrowserMonitor
 from app.state_store import StateStore
 from app.telegram import TelegramNotifier
 
 
 def main() -> None:
-    exhibition_no = os.getenv("EXHIBITION_NO", "E20260133")
+    exhibition_no = os.getenv("EXHIBITION_NO", "E20260902")
     state_file = os.getenv("STATE_FILE", "state.json")
 
     try:
-        client = CasperClient(exhibition_no=exhibition_no)
         notifier = TelegramNotifier()
         state_store = StateStore(file_path=state_file)
+        browser_monitor = BrowserMonitor(exhibition_no=exhibition_no, state_file=state_file)
 
-        raw_cars = client.fetch_cars()
         seen_ids = state_store.load()
-        new_items: List[dict] = []
+        new_items = browser_monitor.scan_once()
         new_ids: List[str] = []
 
-        for car in raw_cars:
-            normalized = client.normalize_car(car)
-            vehicle_id = normalized.get("id", "")
+        filtered = []
+        for item in new_items:
+            vehicle_id = str(item.get("id") or item.get("name") or item.get("link") or "").strip()
             if not vehicle_id or vehicle_id in seen_ids:
                 continue
-            new_items.append(normalized)
+            filtered.append(item)
             new_ids.append(vehicle_id)
 
-        if not new_items:
+        if not filtered:
             state_store.save(seen_ids)
-            print("No new cars detected.")
+            print("선택하신 조건에 맞는 기획전 차량이 없습니다.")
             return
 
-        for car in new_items:
+        for car in filtered:
             try:
                 message = notifier.build_message(car)
                 notifier.send_message(message)

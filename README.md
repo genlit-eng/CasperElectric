@@ -11,11 +11,17 @@ GitHub Actions 환경에서 현대 캐스퍼 특별기획전 페이지를 주기
 
 ## 필수 설정
 
-GitHub 저장소의 Secrets에 다음 값을 등록해야 합니다.
+GitHub 저장소의 Secrets 또는 Variables에 다음 값을 등록하면 됩니다.
 
 - `TELEGRAM_BOT_TOKEN`: Telegram Bot 토큰
 - `TELEGRAM_CHAT_ID`: 채널 또는 그룹의 chat id
-- `EXHIBITION_NO`: 기본값 `E20260133`
+- `EXHIBITION_NO`: 기본값 `E20260902`
+
+권장 방식:
+- GitHub Repository Settings > Secrets and variables > Actions > Variables 에 `EXHIBITION_NO` 등록
+- 값 예: `E20260902`
+
+코드는 `?exhbNo={EXHIBITION_NO}` 형태로 URL을 동적으로 만듭니다. 기획전 번호만 변경하면 별도 코드 수정 없이 URL이 바뀝니다.
 
 ## 로컬 실행
 

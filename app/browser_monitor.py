@@ -1,0 +1,304 @@
+import asyncio
+import hashlib
+import json
+import os
+import re
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:  # pragma: no cover
+    async_playwright = None
+
+
+BASE_URL = "https://casper.hyundai.com/vehicles/car-list/promotion"
+DEFAULT_EXHIBITION_NO = os.getenv("EXHIBITION_NO", "E20260902")
+SIDO_ORDER = [
+    "서울",
+    "부산",
+    "대구",
+    "인천",
+    "광주",
+    "대전",
+    "울산",
+    "세종",
+    "경기",
+    "강원",
+    "충북",
+    "충남",
+    "전북",
+    "전남",
+    "경북",
+    "경남",
+    "제주",
+]
+
+
+class BrowserMonitor:
+    def __init__(self, exhibition_no: str = DEFAULT_EXHIBITION_NO, state_file: str = "state.json") -> None:
+        self.exhibition_no = (exhibition_no or DEFAULT_EXHIBITION_NO).strip()
+        self.state_file = state_file
+
+    def load_seen(self) -> set[str]:
+        path = Path(self.state_file)
+        if not path.exists():
+            return set()
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                data = json.load(handle)
+                if isinstance(data, list):
+                    return {str(item) for item in data}
+        except Exception:
+            pass
+        return set()
+
+    def save_seen(self, ids: Sequence[str]) -> None:
+        path = Path(self.state_file)
+        with path.open("w", encoding="utf-8") as handle:
+            json.dump(list(dict.fromkeys(str(item) for item in ids)), handle, ensure_ascii=False, indent=2)
+
+    @staticmethod
+    def _dedupe_key(text: str, link: str = "") -> str:
+        raw = f"{text}|{link}".strip("|")
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    async def _all_inner_texts(locator) -> List[str]:
+        try:
+            items = await locator.all_inner_texts()
+            return [str(item).strip() for item in items if str(item).strip()]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _clean_option_label(value: str) -> str:
+        return re.sub(r"\s+", " ", value).strip()
+
+    async def _open_page(self, page):
+        url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
+        await page.goto(url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(1500)
+
+    async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
+        selects = page.locator("select")
+        count = await selects.count()
+        entries: List[Tuple[Any, List[str]]] = []
+        for idx in range(count):
+            item = selects.nth(idx)
+            texts = await self._all_inner_texts(item)
+            labels = [self._clean_option_label(text) for text in texts if self._clean_option_label(text)]
+            if len(labels) > 1:
+                entries.append((item, labels))
+        return entries
+
+    async def _get_select_options(self, select_locator) -> List[Dict[str, str]]:
+        options = select_locator.locator("option")
+        result: List[Dict[str, str]] = []
+        count = await options.count()
+        for idx in range(count):
+            option = options.nth(idx)
+            label = self._clean_option_label(await option.inner_text())
+            value = (await option.get_attribute("value")) or label
+            if not label:
+                continue
+            result.append({"label": label, "value": value})
+        return result
+
+    async def _select_first_sigun(self, sigungu_select) -> Optional[str]:
+        if sigungu_select is None:
+            return None
+        options = await self._get_select_options(sigungu_select)
+        if not options:
+            return None
+        candidates = [
+            item for item in options
+            if item["label"] not in {"시/군/구 선택", "선택", "전체", ""}
+        ]
+        if not candidates:
+            return None
+        first = candidates[0]
+        await sigungu_select.select_option(value=first["value"] or first["label"])
+        return first["label"]
+
+    async def _click_search(self, page) -> None:
+        selectors = [
+            "button:has-text('조회')",
+            "button:has-text('검색')",
+            "button:has-text('검색하기')",
+            "input[type='submit']",
+            "a:has-text('조회')",
+            "a:has-text('검색')",
+        ]
+        for selector in selectors:
+            locator = page.locator(selector)
+            if await locator.count() > 0:
+                try:
+                    await locator.first.click()
+                    await page.wait_for_timeout(1200)
+                    return
+                except Exception:
+                    continue
+
+    async def _is_no_result(self, page) -> bool:
+        text = await page.locator("body").inner_text()
+        no_result_patterns = [
+            "선택하신 조건에 맞는 기획전 차량이 없습니다",
+            "해당 조건에 맞는 차량이 없습니다",
+            "검색 결과가 없습니다",
+            "차량이 없습니다",
+        ]
+        normalized = text or ""
+        return any(pattern in normalized for pattern in no_result_patterns)
+
+    async def _extract_result_cards(self, page) -> List[Dict[str, Any]]:
+        selectors = [
+            "article",
+            "li",
+            "tr",
+            ".car-item",
+            ".product-item",
+            ".vehicle-item",
+            "[data-car-code]",
+            "a[href*='vehicle']",
+            "a[href*='car']",
+        ]
+
+        collected: List[Dict[str, Any]] = []
+        for selector in selectors:
+            locators = page.locator(selector)
+            count = await locators.count()
+            if count == 0:
+                continue
+            for idx in range(min(count, 50)):
+                card = locators.nth(idx)
+                text = self._clean_option_label(await card.inner_text())
+                if len(text) < 5:
+                    continue
+                href = None
+                if await card.locator("a").count() > 0:
+                    href = await card.locator("a").first.get_attribute("href")
+                if href and ("javascript:" in href.lower() or href.startswith("#")):
+                    href = None
+                item = {
+                    "text": text,
+                    "href": href or f"{BASE_URL}?exhbNo={self.exhibition_no}",
+                }
+                if item not in collected:
+                    collected.append(item)
+        return collected
+
+    async def _scan_region(self, page) -> List[Dict[str, Any]]:
+        selects = await self._find_selects(page)
+        if not selects:
+            raise RuntimeError("페이지에서 지역 드롭다운을 찾지 못했습니다.")
+
+        sido_select = None
+        sigungu_select = None
+        for locator, labels in selects:
+            normalized = [self._clean_option_label(label) for label in labels if self._clean_option_label(label)]
+            if sido_select is None and any(label in SIDO_ORDER for label in normalized):
+                sido_select = locator
+                continue
+            if sigungu_select is None and locator != sido_select:
+                sigungu_select = locator
+
+        if sido_select is None:
+            sido_select = selects[0][0]
+
+        sido_options = await self._get_select_options(sido_select)
+        sido_candidates = [
+            item["label"] for item in sido_options
+            if item["label"] in SIDO_ORDER
+        ]
+
+        if not sido_candidates:
+            sido_candidates = [
+                item["label"] for item in sido_options
+                if item["label"] and item["label"] not in {"선택", "전체", "시/도 선택"}
+            ]
+
+        results: List[Dict[str, Any]] = []
+        seen_ids = self.load_seen()
+
+        for sido in sido_candidates:
+            try:
+                await sido_select.select_option(label=sido)
+                await page.wait_for_timeout(900)
+            except Exception:
+                option_values = await self._get_select_options(sido_select)
+                for item in option_values:
+                    if item["label"] == sido:
+                        await sido_select.select_option(value=item["value"] or item["label"])
+                        break
+                await page.wait_for_timeout(900)
+
+            if sigungu_select is not None:
+                sigungu_first = await self._select_first_sigun(sigungu_select)
+                if sigungu_first is not None:
+                    print(f"{sido} / {sigungu_first} 조회 중")
+            await self._click_search(page)
+            await page.wait_for_timeout(1500)
+
+            if await self._is_no_result(page):
+                print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
+                continue
+
+            cards = await self._extract_result_cards(page)
+            for card in cards:
+                text = self._clean_option_label(card.get("text", ""))
+                link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                if not text:
+                    continue
+                vehicle_id = self._dedupe_key(text, link)
+                if vehicle_id in seen_ids:
+                    continue
+                seen_ids.add(vehicle_id)
+                results.append({
+                    "id": vehicle_id,
+                    "name": text[:80],
+                    "trim": "미상",
+                    "color": "미상",
+                    "price": 0,
+                    "deliveryCenter": sido,
+                    "link": link,
+                    "region": sido,
+                })
+
+        self.save_seen(sorted(seen_ids))
+        return results
+
+    async def run(self) -> List[Dict[str, Any]]:
+        if async_playwright is None:
+            raise RuntimeError("Playwright가 설치되지 않았습니다. pip install playwright 및 playwright install chromium 를 먼저 실행하세요.")
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=True)
+            page = await browser.new_page(viewport={"width": 1600, "height": 1200})
+            try:
+                await self._open_page(page)
+                return await self._scan_region(page)
+            finally:
+                await browser.close()
+
+    def scan_once(self) -> List[Dict[str, Any]]:
+        async def _inner() -> List[Dict[str, Any]]:
+            return await self.run()
+        return asyncio.run(_inner())
+
+
+async def main() -> None:
+    monitor = BrowserMonitor(exhibition_no=DEFAULT_EXHIBITION_NO, state_file="state.json")
+    try:
+        vehicles = await monitor.run()
+        if not vehicles:
+            print("선택하신 조건에 맞는 기획전 차량이 없습니다.")
+            return
+        for item in vehicles:
+            print(item)
+    except Exception as exc:
+        print(f"브라우저 검색 중 오류: {exc}")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
