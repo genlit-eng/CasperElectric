@@ -32,7 +32,7 @@ jobs:
 
       - name: Run monitor
         run: |
-          python app/monitor.py
+          python -m app.monitor
 
       - name: Commit state file
         shell: bash

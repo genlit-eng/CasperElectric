@@ -1,6 +1,11 @@
 import os
 import sys
+from pathlib import Path
 from typing import List
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from app.casper_client import CasperClient
 from app.state_store import StateStore
