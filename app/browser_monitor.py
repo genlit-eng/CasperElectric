@@ -140,6 +140,47 @@ class BrowserMonitor:
                 except Exception:
                     continue
 
+    async def _get_available_sidos(self, page) -> List[str]:
+        result = await page.evaluate("""
+            () => {
+                try {
+                    const raw = window.__NUXT__?.state?.commonModules?.addressSiDoList?.data;
+                    if (Array.isArray(raw)) {
+                        const names = raw
+                            .map(item => item?.codeName || item?.name || item?.label || '')
+                            .filter(Boolean)
+                            .map(String);
+                        return [...new Set(names)];
+                    }
+                } catch (error) {
+                    return [];
+                }
+                return [];
+            }
+        """)
+        if result:
+            return [str(item).strip() for item in result if str(item).strip()]
+
+        return [
+            "서울",
+            "부산",
+            "대구",
+            "인천",
+            "광주",
+            "대전",
+            "울산",
+            "세종",
+            "경기",
+            "강원",
+            "충북",
+            "충남",
+            "전북",
+            "전남",
+            "경북",
+            "경남",
+            "제주",
+        ]
+
     async def _is_no_result(self, page) -> bool:
         text = await page.locator("body").inner_text()
         no_result_patterns = [
@@ -281,29 +322,25 @@ class BrowserMonitor:
         if "선택하신 조건에 맞는 기획전 차량이 없습니다." in body_text and "기준으로 검색합니다" not in body_text:
             return []
 
-        trigger = page.locator("button, a, div").filter(has_text="배송지역 변경")
-        if await trigger.count() > 0:
-            try:
-                await trigger.first.click()
-                await page.wait_for_timeout(1500)
-            except Exception:
-                pass
-
-        all_texts = await page.locator("button, a, li, div, span").all_inner_texts()
-        matched_sidos = [
-            text for text in all_texts
-            if self._clean_option_label(text) in {"서울", "서울특별시"}
-        ]
-        unique_sidos = list(dict.fromkeys(self._clean_option_label(item) for item in matched_sidos if self._clean_option_label(item)))
-
-        if not unique_sidos:
-            unique_sidos = [current_region]
+        sidos = await self._get_available_sidos(page)
+        if not sidos:
+            sidos = [current_region]
             print(f"커스텀 UI에서 시/도를 직접 찾지 못해 기본 지역 {current_region}으로 조회합니다.")
+        else:
+            print(f"페이지 상태에서 확인된 시/도 목록: {sidos}")
 
         results: List[Dict[str, Any]] = []
         seen_ids = self.load_seen()
 
-        for sido in unique_sidos:
+        for sido in sidos:
+            trigger = page.locator("button, a, div").filter(has_text="배송지역 변경")
+            if await trigger.count() > 0:
+                try:
+                    await trigger.first.click()
+                    await page.wait_for_timeout(1200)
+                except Exception:
+                    pass
+
             region_match = page.locator("button, a, li, div, span").filter(has_text=sido)
             if await region_match.count() > 0:
                 try:
@@ -311,6 +348,7 @@ class BrowserMonitor:
                     await page.wait_for_timeout(900)
                 except Exception:
                     pass
+
             await self._click_search(page)
             await page.wait_for_timeout(1500)
 
