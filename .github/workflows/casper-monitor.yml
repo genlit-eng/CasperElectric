@@ -39,10 +39,14 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add state.json
-          if git diff --cached --quiet; then
-            echo "No state change to commit."
+          if [ -f state.json ]; then
+            git add state.json
+            if git diff --cached --quiet; then
+              echo "No state change to commit."
+            else
+              git commit -m "Update Casper monitor state"
+              git push
+            fi
           else
-            git commit -m "Update Casper monitor state"
-            git push
+            echo "state.json not created; skipping commit."
           fi

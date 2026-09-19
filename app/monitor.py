@@ -35,6 +35,7 @@ def main() -> None:
             new_ids.append(vehicle_id)
 
         if not new_items:
+            state_store.save(seen_ids)
             print("No new cars detected.")
             return
 
