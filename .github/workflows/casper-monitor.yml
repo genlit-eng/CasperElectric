@@ -10,13 +10,8 @@ permissions:
 
 jobs:
   monitor:
-<<<<<<< HEAD
-    runs-on: ubuntu-24.04    
-    timeout-minutes: 10
-=======
     runs-on: ubuntu-latest
     timeout-minutes: 15
->>>>>>> 206aa41 (Update Casper monitor)
 
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
