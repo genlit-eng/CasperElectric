@@ -270,7 +270,15 @@ class BrowserMonitor:
 
     async def _scan_region_custom_ui(self, page) -> List[Dict[str, Any]]:
         body_text = await page.locator("body").inner_text()
-        if "선택하신 조건에 맞는 기획전 차량이 없습니다." in body_text:
+        normalized_body = self._clean_option_label(body_text)
+
+        current_region = "서울특별시"
+        if "서울 기준으로 검색합니다" in normalized_body:
+            current_region = "서울"
+        elif "서울특별시 기준으로 검색합니다" in normalized_body:
+            current_region = "서울특별시"
+
+        if "선택하신 조건에 맞는 기획전 차량이 없습니다." in body_text and "기준으로 검색합니다" not in body_text:
             return []
 
         trigger = page.locator("button, a, div").filter(has_text="배송지역 변경")
@@ -284,16 +292,17 @@ class BrowserMonitor:
         all_texts = await page.locator("button, a, li, div, span").all_inner_texts()
         matched_sidos = [
             text for text in all_texts
-            if self._clean_option_label(text) in SIDO_ORDER
+            if self._clean_option_label(text) in {"서울", "서울특별시"}
         ]
         unique_sidos = list(dict.fromkeys(self._clean_option_label(item) for item in matched_sidos if self._clean_option_label(item)))
 
         if not unique_sidos:
-            print("커스텀 UI에서 시/도를 찾지 못해 결과 없음으로 처리합니다.")
-            return []
+            unique_sidos = [current_region]
+            print(f"커스텀 UI에서 시/도를 직접 찾지 못해 기본 지역 {current_region}으로 조회합니다.")
 
         results: List[Dict[str, Any]] = []
         seen_ids = self.load_seen()
+
         for sido in unique_sidos:
             region_match = page.locator("button, a, li, div, span").filter(has_text=sido)
             if await region_match.count() > 0:

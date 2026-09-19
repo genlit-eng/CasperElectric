@@ -21,6 +21,8 @@ GitHub 저장소의 Secrets 또는 Variables에 다음 값을 등록하면 됩�
 - GitHub Repository Settings > Secrets and variables > Actions > Variables 에 `EXHIBITION_NO` 등록
 - 값 예: `E20260902`
 
+기본 조회 지역은 서울/서울특별시 기준으로 고정하며, 커스텀 팝업 UI가 드롭다운을 직접 노출하지 않을 때에도 현재 페이지의 지역 상태를 우선 존중합니다.
+
 코드는 `?exhbNo={EXHIBITION_NO}` 형태로 URL을 동적으로 만듭니다. 기획전 번호만 변경하면 별도 코드 수정 없이 URL이 바뀝니다.
 
 ## 로컬 실행
