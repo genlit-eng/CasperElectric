@@ -191,7 +191,7 @@ class BrowserMonitor:
     async def _scan_region(self, page) -> List[Dict[str, Any]]:
         selects = await self._find_selects(page)
         if not selects:
-            raise RuntimeError("페이지에서 지역 드롭다운을 찾지 못했습니다.")
+            return await self._scan_region_custom_ui(page)
 
         sido_select = None
         sigungu_select = None
@@ -237,6 +237,71 @@ class BrowserMonitor:
                 sigungu_first = await self._select_first_sigun(sigungu_select)
                 if sigungu_first is not None:
                     print(f"{sido} / {sigungu_first} 조회 중")
+            await self._click_search(page)
+            await page.wait_for_timeout(1500)
+
+            if await self._is_no_result(page):
+                print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
+                continue
+
+            cards = await self._extract_result_cards(page)
+            for card in cards:
+                text = self._clean_option_label(card.get("text", ""))
+                link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                if not text:
+                    continue
+                vehicle_id = self._dedupe_key(text, link)
+                if vehicle_id in seen_ids:
+                    continue
+                seen_ids.add(vehicle_id)
+                results.append({
+                    "id": vehicle_id,
+                    "name": text[:80],
+                    "trim": "미상",
+                    "color": "미상",
+                    "price": 0,
+                    "deliveryCenter": sido,
+                    "link": link,
+                    "region": sido,
+                })
+
+        self.save_seen(sorted(seen_ids))
+        return results
+
+    async def _scan_region_custom_ui(self, page) -> List[Dict[str, Any]]:
+        body_text = await page.locator("body").inner_text()
+        if "선택하신 조건에 맞는 기획전 차량이 없습니다." in body_text:
+            return []
+
+        trigger = page.locator("button, a, div").filter(has_text="배송지역 변경")
+        if await trigger.count() > 0:
+            try:
+                await trigger.first.click()
+                await page.wait_for_timeout(1500)
+            except Exception:
+                pass
+
+        all_texts = await page.locator("button, a, li, div, span").all_inner_texts()
+        matched_sidos = [
+            text for text in all_texts
+            if self._clean_option_label(text) in SIDO_ORDER
+        ]
+        unique_sidos = list(dict.fromkeys(self._clean_option_label(item) for item in matched_sidos if self._clean_option_label(item)))
+
+        if not unique_sidos:
+            print("커스텀 UI에서 시/도를 찾지 못해 결과 없음으로 처리합니다.")
+            return []
+
+        results: List[Dict[str, Any]] = []
+        seen_ids = self.load_seen()
+        for sido in unique_sidos:
+            region_match = page.locator("button, a, li, div, span").filter(has_text=sido)
+            if await region_match.count() > 0:
+                try:
+                    await region_match.first.click()
+                    await page.wait_for_timeout(900)
+                except Exception:
+                    pass
             await self._click_search(page)
             await page.wait_for_timeout(1500)
 
