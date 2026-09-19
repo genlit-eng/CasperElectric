@@ -1,5 +1,4 @@
 import json
-import os
 from typing import Any, Dict, List
 
 import requests
@@ -31,15 +30,26 @@ class CasperClient:
             },
         }
 
-        response = requests.post(
-            self.base_url,
-            headers=self.headers,
-            json=payload,
-            timeout=30,
-        )
-        response.raise_for_status()
+        try:
+            response = requests.post(
+                self.base_url,
+                headers=self.headers,
+                json=payload,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            print(f"Request failed while fetching Casper cars: {exc}")
+            return []
 
-        data = response.json()
+        if response.status_code != 200:
+            print(f"Hyundai API returned status {response.status_code}: {response.text[:500]}")
+            return []
+
+        try:
+            data = response.json()
+        except ValueError:
+            print(f"Invalid JSON from Hyundai API: {response.text[:500]}")
+            return []
 
         if isinstance(data, dict):
             items = data.get("result", {}).get("items")
@@ -53,6 +63,7 @@ class CasperClient:
         if isinstance(data, list):
             return data
 
+        print(f"Unexpected response structure from Hyundai API: {str(data)[:500]}")
         return []
 
     def normalize_car(self, car: Dict[str, Any]) -> Dict[str, Any]:
