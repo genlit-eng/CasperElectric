@@ -604,16 +604,17 @@ class BrowserMonitor:
                 await self._open_page(page)
                 results = await self._scan_region(page)
 
-                # 특급 매칭(100% 완벽 일치) 차량 발견 시 동일 세션에서 즉시 원클릭 자동 견적/계약 URL 생성
+                # 매칭 차량(특급 매칭 및 관심 차량) 발견 시 동일 세션에서 즉시 원클릭 자동 견적/계약 URL 생성
                 seen_ids = self.load_seen()
                 for car in results:
                     cid = car.get("id")
                     if cid and cid not in seen_ids:
                         try:
                             from app.telegram import TelegramNotifier
-                            if TelegramNotifier.classify_target(car) == 1 and car.get("car_prod_no"):
+                            cat = TelegramNotifier.classify_target(car)
+                            if cat in (1, 2) and car.get("car_prod_no"):
                                 from app.contract_service import ContractService
-                                print(f"⚡ 특급 매칭 차량({car.get('name')}) 자동 견적/계약 URL 생성 시작...")
+                                print(f"⚡ 매칭 차량(순위 {cat}, {car.get('name')}) 자동 견적/계약 URL 생성 시작...")
                                 est_url = await ContractService.generate_auto_contract_url(
                                     page,
                                     car_prod_no=car["car_prod_no"],
