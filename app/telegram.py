@@ -153,16 +153,19 @@ class TelegramNotifier:
                 f"{links_block}"
             )
         else:
-            # 3순위: 조건 미충족 일반 차량
+            # 3순위: 조건 미충족 일반 차량 (크로스, 프리미엄 등 모든 신규 등록 차량)
             msg = (
-                f"📋 <b>[일반 등록] 캐스퍼 신규 차량</b>\n"
-                f"차량: <b>{name}</b>\n"
-                f"트림: {trim}\n"
-                f"색상: {color}\n"
-                f"가격: {price_text}\n"
-                f"출고센터: {delivery_center}\n"
-                f"옵션: {options_text}\n"
-                f"링크: <a href=\"{link}\">바로 확인</a>"
+                f"📋 <b>[신규 등록] 캐스퍼 신규 차량</b>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"<blockquote>🚗 <b>차량:</b> {name}\n"
+                f"🏷️ <b>트림:</b> <b>{trim}</b>\n"
+                f"🎨 <b>색상:</b> {color}\n"
+                f"💰 <b>가격:</b> <b>{price_text}</b>\n"
+                f"🏢 <b>출고센터:</b> {delivery_center}\n"
+                f"✨ <b>선택옵션:</b> {options_text}\n"
+                f"</blockquote>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👉 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>"
             )
 
         return msg

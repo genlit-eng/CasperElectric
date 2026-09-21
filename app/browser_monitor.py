@@ -36,9 +36,9 @@ SIDO_ORDER = [
     "제주",
 ]
 
-# 전기차 구매보조금 신청 지역 고정 설정 (경북 구미시)
-SUBSIDY_SIDO = os.getenv("SUBSIDY_SIDO", "경북")
-SUBSIDY_SIGUN = os.getenv("SUBSIDY_SIGUN", "구미시")
+# 전기차 구매보조금 신청 지역 설정 (기본값 빈 문자열: 보조금 상한가 및 가격 필터를 해제하여 모든 가격대 차량 수집)
+SUBSIDY_SIDO = os.getenv("SUBSIDY_SIDO", "").strip()
+SUBSIDY_SIGUN = os.getenv("SUBSIDY_SIGUN", "").strip()
 
 
 class BrowserMonitor:
@@ -169,6 +169,21 @@ class BrowserMonitor:
                             )
                         if not already_exists:
                             self._all_captured_api_items.append(item)
+
+    @staticmethod
+    async def _handle_cars_route(route, request) -> None:
+        if "/exhibition/cars" in request.url.lower() and request.method == "POST":
+            try:
+                payload = request.post_data_json
+                if isinstance(payload, dict):
+                    # 보조금 상한가 및 가격 슬라이더 필터를 원천 해제하여 모든 가격대 차량(크로스, 고가 라운지 등) 수집
+                    payload["minSalePrice"] = "0"
+                    payload["maxSalePrice"] = "99999999"
+                    await route.continue_(post_data=json.dumps(payload))
+                    return
+            except Exception:
+                pass
+        await route.continue_()
 
     async def _print_network_candidates(self) -> None:
         if not self._verbose():
@@ -475,45 +490,46 @@ class BrowserMonitor:
                     except Exception:
                         pass
 
-                # 2. 전기차 구매보조금 신청 지역 (경북 구미시로 고정)
-                sub_sido_input = dialog.locator("input[placeholder='시/도 선택']")
-                if await sub_sido_input.count() > 0:
-                    try:
-                        current_sub_sido = await sub_sido_input.input_value()
-                        if current_sub_sido != SUBSIDY_SIDO:
-                            await sub_sido_input.click()
-                            await page.wait_for_timeout(200)
+                # 2. 전기차 구매보조금 신청 지역 (환경변수 명시 시에만 설정, 기본값은 미설정하여 보조금 상한가 해제)
+                if SUBSIDY_SIDO and SUBSIDY_SIGUN:
+                    sub_sido_input = dialog.locator("input[placeholder='시/도 선택']")
+                    if await sub_sido_input.count() > 0:
+                        try:
+                            current_sub_sido = await sub_sido_input.input_value()
+                            if current_sub_sido != SUBSIDY_SIDO:
+                                await sub_sido_input.click()
+                                await page.wait_for_timeout(200)
 
-                            sub_sido_opt = page.locator(
-                                ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
-                            ).filter(has_text=re.compile(rf"^\s*{re.escape(SUBSIDY_SIDO)}\s*$"))
-                            if await sub_sido_opt.count() == 0:
                                 sub_sido_opt = page.locator(
                                     ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
-                                ).filter(has_text=SUBSIDY_SIDO)
+                                ).filter(has_text=re.compile(rf"^\s*{re.escape(SUBSIDY_SIDO)}\s*$"))
+                                if await sub_sido_opt.count() == 0:
+                                    sub_sido_opt = page.locator(
+                                        ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                                    ).filter(has_text=SUBSIDY_SIDO)
 
-                            if await sub_sido_opt.count() > 0:
-                                await sub_sido_opt.first.click()
-                                await page.wait_for_timeout(250)
+                                if await sub_sido_opt.count() > 0:
+                                    await sub_sido_opt.first.click()
+                                    await page.wait_for_timeout(250)
 
-                        sub_sig_input = dialog.locator("input[placeholder='시/군 선택']")
-                        if await sub_sig_input.count() > 0:
-                            current_sub_sig = await sub_sig_input.input_value()
-                            if current_sub_sig != SUBSIDY_SIGUN:
-                                await sub_sig_input.click()
-                                await page.wait_for_timeout(200)
-                                sub_sig_opts = page.locator(
-                                    ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
-                                )
-                                sub_sig_target = sub_sig_opts.filter(has_text=SUBSIDY_SIGUN)
-                                if await sub_sig_target.count() > 0:
-                                    await sub_sig_target.first.click()
-                                elif await sub_sig_opts.count() > 0:
-                                    await sub_sig_opts.first.click()
-                                await page.wait_for_timeout(200)
-                    except Exception as exc:
-                        if self._verbose():
-                            print(f"[{sido}] 보조금 지역({SUBSIDY_SIDO} {SUBSIDY_SIGUN}) 설정 참고: {exc}")
+                            sub_sig_input = dialog.locator("input[placeholder='시/군 선택']")
+                            if await sub_sig_input.count() > 0:
+                                current_sub_sig = await sub_sig_input.input_value()
+                                if current_sub_sig != SUBSIDY_SIGUN:
+                                    await sub_sig_input.click()
+                                    await page.wait_for_timeout(200)
+                                    sub_sig_opts = page.locator(
+                                        ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                                    )
+                                    sub_sig_target = sub_sig_opts.filter(has_text=SUBSIDY_SIGUN)
+                                    if await sub_sig_target.count() > 0:
+                                        await sub_sig_target.first.click()
+                                    elif await sub_sig_opts.count() > 0:
+                                        await sub_sig_opts.first.click()
+                                    await page.wait_for_timeout(200)
+                        except Exception as exc:
+                            if self._verbose():
+                                print(f"[{sido}] 보조금 지역({SUBSIDY_SIDO} {SUBSIDY_SIGUN}) 설정 참고: {exc}")
 
                 # 3. 변경 버튼 클릭하여 적용
                 change_btn = dialog.locator("button:has-text('변경')")
@@ -582,6 +598,7 @@ class BrowserMonitor:
                 timezone_id="Asia/Seoul",
             )
             page = await context.new_page()
+            await page.route("**/exhibition/cars/**", self._handle_cars_route)
             page.on("response", self._capture_vehicle_response)
             try:
                 await self._open_page(page)
