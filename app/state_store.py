@@ -63,3 +63,39 @@ class StateStore:
         current = self.load()
         combined = list(dict.fromkeys(current + [str(item) for item in new_ids]))
         self.save(combined)
+
+    @staticmethod
+    def merge_with_remote(file_path: str = "state.json", git_ref: str = "origin/main:state.json") -> bool:
+        import subprocess
+        remote_data = {}
+        try:
+            res = subprocess.check_output(["git", "show", git_ref], text=True, stderr=subprocess.DEVNULL)
+            remote_data = json.loads(res)
+        except Exception:
+            pass
+
+        local_data = {}
+        try:
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    local_data = json.load(f)
+        except Exception:
+            pass
+
+        exhb = local_data.get("exhibition_no") or remote_data.get("exhibition_no") or "E20260902"
+        local_ids = local_data.get("seen_ids", []) if isinstance(local_data.get("seen_ids"), list) else []
+        remote_ids = remote_data.get("seen_ids", []) if isinstance(remote_data.get("seen_ids"), list) else []
+        merged_ids = list(dict.fromkeys(remote_ids + local_ids))
+
+        t_local = local_data.get("last_updated", "")
+        t_remote = remote_data.get("last_updated", "")
+        last_t = max(t_local, t_remote) or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        merged = {
+            "exhibition_no": exhb,
+            "last_updated": last_t,
+            "seen_ids": merged_ids
+        }
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(merged, f, ensure_ascii=False, indent=2)
+        return True

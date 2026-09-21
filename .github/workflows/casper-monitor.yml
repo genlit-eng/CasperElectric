@@ -48,15 +48,32 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [ -f state.json ]; then
+
+          if [ ! -f state.json ]; then
+            echo "state.json not created; skipping commit."
+            exit 0
+          fi
+
+          for attempt in {1..3}; do
+            echo "Commit attempt $attempt..."
+            git fetch origin main
+
+            python -c "from app.state_store import StateStore; StateStore.merge_with_remote()"
+
+            git reset origin/main
             git add state.json
+
             if git diff --cached --quiet; then
               echo "No state change to commit."
-            else
-              git commit -m "Update Casper monitor state"
-              git pull --rebase origin main
-              git push
+              break
             fi
-          else
-            echo "state.json not created; skipping commit."
-          fi
+
+            git commit -m "Update Casper monitor state"
+            if git push origin main; then
+              echo "Successfully pushed state update."
+              break
+            else
+              echo "Push failed (concurrent update). Retrying in 2 seconds..."
+              sleep 2
+            fi
+          done
