@@ -36,6 +36,19 @@ SIDO_ORDER = [
     "제주",
 ]
 
+# 각 시/도별 출고센터 소재지 및 대표 시/군 매핑
+# (가나다순 첫 시/군 선택 시 보조금 상한가 제한으로 인스퍼레이션 등 고가 트림 누락 방지)
+PRIMARY_SIGUN_MAP = {
+    "전북": "전주시",  # 전주출고센터 (고창군 등 선택 시 상한가 3,482만원으로 3,679만원 인스퍼레이션 누락 방지)
+    "경북": "칠곡군",  # 칠곡출고센터
+    "충북": "옥천군",  # 옥천출고센터
+    "전남": "담양군",  # 담양출고센터
+    "경남": "함안군",  # 함안출고센터 / 영남출고센터
+    "강원": "원주시",  # 원주출고센터
+    "충남": "아산시",  # 아산출고센터
+    "경기": "시흥시",  # 시흥/신갈/남양출고센터
+}
+
 
 class BrowserMonitor:
     def __init__(self, exhibition_no: str = DEFAULT_EXHIBITION_NO, state_file: str = "state.json") -> None:
@@ -415,6 +428,8 @@ class BrowserMonitor:
                     print(f"[{sido}] 시/도 선택 실패: {exc}")
                     continue
 
+                sigun_to_select = target_sigun or PRIMARY_SIGUN_MAP.get(sido, "")
+
                 # 1-2. 배송지 시/군/구 선택
                 sigungu_input = dialog.locator("input[placeholder='시/군/구']")
                 if await sigungu_input.count() > 0:
@@ -424,8 +439,8 @@ class BrowserMonitor:
                         sig_opts = page.locator(
                             ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
                         )
-                        if target_sigun and await sig_opts.filter(has_text=target_sigun).count() > 0:
-                            await sig_opts.filter(has_text=target_sigun).first.click()
+                        if sigun_to_select and await sig_opts.filter(has_text=sigun_to_select).count() > 0:
+                            await sig_opts.filter(has_text=sigun_to_select).first.click()
                         elif await sig_opts.count() > 0:
                             await sig_opts.first.click()
                         await page.wait_for_timeout(250)
@@ -458,8 +473,8 @@ class BrowserMonitor:
                                 sub_sig_opts = page.locator(
                                     ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
                                 )
-                                if target_sigun and await sub_sig_opts.filter(has_text=target_sigun).count() > 0:
-                                    await sub_sig_opts.filter(has_text=target_sigun).first.click()
+                                if sigun_to_select and await sub_sig_opts.filter(has_text=sigun_to_select).count() > 0:
+                                    await sub_sig_opts.filter(has_text=sigun_to_select).first.click()
                                 elif await sub_sig_opts.count() > 0:
                                     await sub_sig_opts.first.click()
                                 await page.wait_for_timeout(200)
