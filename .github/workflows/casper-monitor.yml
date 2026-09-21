@@ -5,6 +5,10 @@ on:
   schedule:
     - cron: '*/5 * * * *'
 
+concurrency:
+  group: casper-monitor
+  cancel-in-progress: false
+
 permissions:
   contents: write
 
