@@ -1,4 +1,6 @@
 import json
+import urllib.parse
+from datetime import datetime
 from typing import Any, Dict, List
 
 import requests
@@ -109,6 +111,20 @@ class CasperClient:
         return collected
 
     def normalize_car(self, car: Dict[str, Any]) -> Dict[str, Any]:
+        car_prod_no = str(car.get("carProductionNumber") or "").strip()
+        criterion_ym = str(car.get("criterionYearMonth") or datetime.now().strftime("%Y%m")).strip()
+        exhb_no = str(car.get("exhbNo") or self.exhibition_no).strip()
+
+        if car_prod_no:
+            query = urllib.parse.urlencode({
+                "carProductionNumber": car_prod_no,
+                "criterionYearMonth": criterion_ym,
+                "exhbNo": exhb_no,
+            }, quote_via=urllib.parse.quote)
+            link = f"https://casper.hyundai.com/vehicles/car-list/detail?{query}"
+        else:
+            link = str(car.get("detailUrl") or f"https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo={self.exhibition_no}").strip()
+
         return {
             "id": str(car.get("carCode") or car.get("id") or car.get("carId") or car.get("productCode") or json.dumps(car, ensure_ascii=False)),
             "name": car.get("carName") or car.get("modelName") or "미상",
@@ -116,5 +132,5 @@ class CasperClient:
             "color": car.get("exteriorColorName") or car.get("colorName") or "미상",
             "price": car.get("finalAmount") or car.get("salePrice") or car.get("price") or 0,
             "deliveryCenter": car.get("deliveryCenterName") or car.get("deliveryCenter") or "미상",
-            "link": car.get("detailUrl") or f"https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo={self.exhibition_no}",
+            "link": link,
         }

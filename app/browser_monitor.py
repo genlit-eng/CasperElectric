@@ -3,6 +3,8 @@ import hashlib
 import json
 import os
 import re
+import urllib.parse
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -215,7 +217,21 @@ class BrowserMonitor:
                     choice_options_display.append(clean_o)
 
         options_text = ", ".join(choice_options_display) if choice_options_display else ""
-        link = str(item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}").strip()
+
+        # 차량 개별 상세 및 즉시 구매 페이지 다이렉트 URL 생성
+        car_prod_no = str(item.get("carProductionNumber") or "").strip()
+        criterion_ym = str(item.get("criterionYearMonth") or datetime.now().strftime("%Y%m")).strip()
+        exhb_no = str(item.get("exhbNo") or self.exhibition_no).strip()
+
+        if car_prod_no:
+            query = urllib.parse.urlencode({
+                "carProductionNumber": car_prod_no,
+                "criterionYearMonth": criterion_ym,
+                "exhbNo": exhb_no,
+            }, quote_via=urllib.parse.quote)
+            link = f"https://casper.hyundai.com/vehicles/car-list/detail?{query}"
+        else:
+            link = str(item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}").strip()
 
         return {
             "id": vehicle_id,
