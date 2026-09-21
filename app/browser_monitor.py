@@ -6,6 +6,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import requests
+
 try:
     from playwright.async_api import async_playwright
 except ImportError:  # pragma: no cover
@@ -47,6 +49,7 @@ class BrowserMonitor:
         self.exhibition_no = (exhibition_no or DEFAULT_EXHIBITION_NO).strip()
         self.state_file = state_file
         self._latest_api_items: List[Dict[str, Any]] = []
+        self._http = requests.Session()
 
     def load_seen(self) -> set[str]:
         path = Path(self.state_file)
@@ -149,30 +152,24 @@ class BrowserMonitor:
                 "sortCode": "10",
             },
         }
-        response_data = await page.evaluate(
-            """
-            async ({url, payload}) => {
-                try {
-                    const response = await fetch(url, {
-                        method: 'POST',
-                        headers: {'content-type': 'application/json;charset=UTF-8'},
-                        body: JSON.stringify(payload)
-                    });
-                    return {status: response.status, body: await response.text()};
-                } catch (error) {
-                    return {status: 0, body: '', error: String(error)};
-                }
-            }
-            """,
-            {"url": VEHICLE_API_URL, "payload": payload},
-        )
+        headers = {
+            "accept": "application/json, text/plain, */*",
+            "accept-language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "content-type": "application/json;charset=UTF-8",
+            "origin": "https://casper.hyundai.com",
+            "referer": f"{BASE_URL}?exhbNo={self.exhibition_no}",
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+        }
         try:
-            result = json.loads(response_data.get("body", "{}"))
-        except (TypeError, ValueError):
+            response = self._http.post(VEHICLE_API_URL, headers=headers, json=payload, timeout=30)
+            result = response.json()
+            status = response.status_code
+        except (requests.RequestException, ValueError) as error:
             result = {}
+            status = 0
+            print(f"차량 API 요청 실패: area={area_code or 'ALL'} error={error}")
         items = self._find_vehicle_items(result)
         if not items:
-            status = response_data.get("status", 0)
             message = result.get("rspStatus", {}).get("rspMessage", "") if isinstance(result, dict) else ""
             print(f"차량 API 응답 없음: area={area_code or 'ALL'} status={status} message={message}")
         return items
