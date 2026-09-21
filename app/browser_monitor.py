@@ -59,7 +59,14 @@ class BrowserMonitor:
         try:
             with path.open("r", encoding="utf-8") as handle:
                 data = json.load(handle)
+                if isinstance(data, dict):
+                    saved_exhb = str(data.get("exhibition_no", "")).strip()
+                    if self.exhibition_no and saved_exhb and saved_exhb != self.exhibition_no:
+                        return set()
+                    return {str(item) for item in data.get("seen_ids", [])}
                 if isinstance(data, list):
+                    if self.exhibition_no and self.exhibition_no != "E20260902":
+                        return set()
                     return {str(item) for item in data}
         except Exception:
             pass
@@ -67,8 +74,13 @@ class BrowserMonitor:
 
     def save_seen(self, ids: Sequence[str]) -> None:
         path = Path(self.state_file)
+        payload = {
+            "exhibition_no": self.exhibition_no or "E20260902",
+            "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "seen_ids": list(dict.fromkeys(str(item) for item in ids)),
+        }
         with path.open("w", encoding="utf-8") as handle:
-            json.dump(list(dict.fromkeys(str(item) for item in ids)), handle, ensure_ascii=False, indent=2)
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
 
     @staticmethod
     def _dedupe_key(text: str, link: str = "") -> str:
@@ -92,6 +104,30 @@ class BrowserMonitor:
         print(f"페이지 접속: {url}")
         await page.goto(url, wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
+
+        # 기획전이 종료되어 캐스퍼 메인 등으로 리다이렉트되었거나 잘못된 경우
+        if "promotion" not in page.url or "exhbNo=" not in page.url:
+            print(f"기존 기획전({self.exhibition_no}) 종료 또는 리다이렉트 감지. 메인 페이지에서 최신 기획전 링크 탐색 중...")
+            try:
+                if page.url.rstrip("/") != "https://casper.hyundai.com":
+                    await page.goto("https://casper.hyundai.com", wait_until="domcontentloaded")
+                    await page.wait_for_timeout(1500)
+
+                links = await page.locator("a[href*='promotion?exhbNo=E']").all()
+                for l in links:
+                    href = (await l.get_attribute("href")) or ""
+                    match = re.search(r"exhbNo=(E[A-Za-z0-9]+)", href)
+                    if match:
+                        new_exhb = match.group(1)
+                        print(f"[최신 기획전 자동 발견] {new_exhb}")
+                        self.exhibition_no = new_exhb
+                        url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                        print(f"새 기획전 페이지 접속: {url}")
+                        await page.goto(url, wait_until="domcontentloaded")
+                        await page.wait_for_timeout(2000)
+                        break
+            except Exception as exc:
+                print(f"최신 기획전 자동 탐색 중 오류: {exc}")
 
     async def _capture_vehicle_response(self, response) -> None:
         url_lower = response.url.lower()
