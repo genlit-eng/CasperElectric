@@ -8,4 +8,9 @@ test_resp_*.json
 dispatch_result.json
 local-test-state.json
 r2.json
+filter_regions_result.json
+gumi_exact_result.json
+all_sigun_codes.json
+tested_subsidy_regions.json
+promotion_html.html
 scratch/
