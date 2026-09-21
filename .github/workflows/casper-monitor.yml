@@ -3,7 +3,7 @@ name: Casper vehicle monitor
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/5 * * * *'
+    - cron: '*/3 * * * *'
 
 concurrency:
   group: casper-monitor
