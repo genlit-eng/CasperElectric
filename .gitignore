@@ -12,5 +12,11 @@ filter_regions_result.json
 gumi_exact_result.json
 all_sigun_codes.json
 tested_subsidy_regions.json
-promotion_html.html
+contract_dialog_text.txt
+detail_action_buttons.json
+estimation_controls.json
+estimation_sections.json
+quote_page_elements.json
+telegram_msg_output.html
+test_state.json
 scratch/

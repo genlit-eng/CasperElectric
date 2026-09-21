@@ -1,0 +1,56 @@
+name: Casper Auto Contract
+
+on:
+  workflow_dispatch:
+    inputs:
+      car_number:
+        description: 'Car production number (e.g. 6X  105040)'
+        required: true
+        type: string
+      month:
+        description: 'Criterion year month (e.g. 202609)'
+        required: false
+        default: '202609'
+        type: string
+      exhibition_no:
+        description: 'Exhibition number'
+        required: false
+        default: 'E20260902'
+        type: string
+
+concurrency:
+  group: casper-contract-${{ inputs.car_number }}
+  cancel-in-progress: false
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      EXHIBITION_NO: ${{ inputs.exhibition_no || vars.EXHIBITION_NO || 'E20260902' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright browser
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Run auto contract
+        run: |
+          python -m app.contract_runner --car-number "${{ inputs.car_number }}" --month "${{ inputs.month }}" --exhibition "${{ env.EXHIBITION_NO }}"
+

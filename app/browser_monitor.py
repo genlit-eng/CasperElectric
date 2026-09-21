@@ -283,6 +283,9 @@ class BrowserMonitor:
             "options": options_text,
             "raw_options": raw_options,
             "link": link,
+            "car_prod_no": car_prod_no,
+            "criterion_ym": criterion_ym,
+            "exhb_no": exhb_no,
         }
 
     async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
@@ -583,6 +586,29 @@ class BrowserMonitor:
             try:
                 await self._open_page(page)
                 results = await self._scan_region(page)
+
+                # 특급 매칭(100% 완벽 일치) 차량 발견 시 동일 세션에서 즉시 원클릭 자동 견적/계약 URL 생성
+                seen_ids = self.load_seen()
+                for car in results:
+                    cid = car.get("id")
+                    if cid and cid not in seen_ids:
+                        try:
+                            from app.telegram import TelegramNotifier
+                            if TelegramNotifier.classify_target(car) == 1 and car.get("car_prod_no"):
+                                from app.contract_service import ContractService
+                                print(f"⚡ 특급 매칭 차량({car.get('name')}) 자동 견적/계약 URL 생성 시작...")
+                                est_url = await ContractService.generate_auto_contract_url(
+                                    page,
+                                    car_prod_no=car["car_prod_no"],
+                                    criterion_ym=car.get("criterion_ym", ""),
+                                    exhb_no=car.get("exhb_no", self.exhibition_no),
+                                )
+                                if est_url:
+                                    car["contract_url"] = est_url
+                                    print(f"✅ 자동 견적 URL 생성 완료: {est_url}")
+                        except Exception as exc:
+                            print(f"자동 견적 URL 생성 중 오류 ({cid}): {exc}")
+
                 await self._print_network_candidates()
                 if save_debug:
                     await page.screenshot(path="casper-debug.png", full_page=True)
