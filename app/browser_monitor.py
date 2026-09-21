@@ -6,8 +6,6 @@ import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-import requests
-
 try:
     from playwright.async_api import async_playwright
 except ImportError:  # pragma: no cover
@@ -18,38 +16,35 @@ BASE_URL = "https://casper.hyundai.com/vehicles/car-list/promotion"
 DEFAULT_EXHIBITION_NO = os.getenv("EXHIBITION_NO", "E20260902")
 SIDO_ORDER = [
     "서울",
-    "부산",
-    "대구",
-    "인천",
-    "광주",
-    "대전",
-    "울산",
-    "세종",
     "경기",
+    "인천",
     "강원",
-    "충북",
+    "대전",
+    "세종",
     "충남",
+    "충북",
+    "대구",
+    "경북",
+    "부산",
+    "울산",
+    "경남",
+    "광주",
     "전북",
     "전남",
-    "경북",
-    "경남",
     "제주",
 ]
-SIDO_CODES = {
-    "서울": "B", "부산": "C", "대구": "D", "인천": "E", "광주": "F",
-    "대전": "G", "울산": "H", "세종": "J", "경기": "K", "강원": "M",
-    "충북": "N", "충남": "P", "전북": "Q", "전남": "R", "경북": "S",
-    "경남": "T", "제주": "U",
-}
-VEHICLE_API_URL = "https://casper.hyundai.com/gw/wp/product/v2/product/exhibition/cars"
 
 
 class BrowserMonitor:
     def __init__(self, exhibition_no: str = DEFAULT_EXHIBITION_NO, state_file: str = "state.json") -> None:
         self.exhibition_no = (exhibition_no or DEFAULT_EXHIBITION_NO).strip()
         self.state_file = state_file
-        self._latest_api_items: List[Dict[str, Any]] = []
-        self._http = requests.Session()
+        self._all_captured_api_items: List[Dict[str, Any]] = []
+        self._network_candidates: List[str] = []
+
+    @staticmethod
+    def _verbose() -> bool:
+        return os.getenv("DEBUG_VERBOSE", "false").strip().lower() in {"1", "true", "yes"}
 
     def load_seen(self) -> set[str]:
         path = Path(self.state_file)
@@ -88,23 +83,68 @@ class BrowserMonitor:
 
     async def _open_page(self, page):
         url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
+        print(f"페이지 접속: {url}")
         await page.goto(url, wait_until="domcontentloaded")
-        await page.wait_for_timeout(1500)
+        await page.wait_for_timeout(2000)
 
     async def _capture_vehicle_response(self, response) -> None:
+        url_lower = response.url.lower()
+        if any(term in url_lower for term in ("/gw/", "api", "product", "vehicle", "car")):
+            if response.url not in self._network_candidates:
+                self._network_candidates.append(response.url)
         try:
             payload = await response.json()
         except Exception:
             return
-        items = self._find_vehicle_items(payload)
-        if isinstance(items, list):
-            self._latest_api_items = [item for item in items if isinstance(item, dict)]
+
+        if "/exhibition/cars" in url_lower:
+            if self._verbose():
+                print(f"차량 페이지 응답: status={response.status} url={response.url}")
+                if isinstance(payload, dict) and payload.get("rspStatus"):
+                    print(f"차량 페이지 rspStatus: {payload.get('rspStatus')}")
+
+            items = self._find_vehicle_items(payload)
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        cid = (
+                            item.get("carProductionNumber")
+                            or item.get("saleCtyNo")
+                            or item.get("vinNo")
+                            or item.get("id")
+                        )
+                        already_exists = False
+                        if cid:
+                            already_exists = any(
+                                (
+                                    c.get("carProductionNumber")
+                                    or c.get("saleCtyNo")
+                                    or c.get("vinNo")
+                                    or c.get("id")
+                                )
+                                == cid
+                                for c in self._all_captured_api_items
+                            )
+                        if not already_exists:
+                            self._all_captured_api_items.append(item)
+
+    async def _print_network_candidates(self) -> None:
+        if not self._verbose():
+            return
+        candidates = [
+            url for url in self._network_candidates
+            if "/exhibition/cars" in url or "/exhibition/filter/" in url
+        ]
+        if candidates:
+            print("페이지 네트워크 후보 URL:")
+            for url in candidates[:10]:
+                print(f"  {url}")
 
     @classmethod
     def _find_vehicle_items(cls, value: Any) -> List[Dict[str, Any]]:
         if isinstance(value, list):
             if value and all(isinstance(item, dict) for item in value):
-                vehicle_keys = {"carCode", "carName", "modelName", "productCode", "carId"}
+                vehicle_keys = {"carCode", "carName", "modelName", "productCode", "carId", "carProductionNumber"}
                 if any(vehicle_keys.intersection(item.keys()) for item in value):
                     return value
             for item in value:
@@ -112,6 +152,8 @@ class BrowserMonitor:
                 if found:
                     return found
         elif isinstance(value, dict):
+            if isinstance(value.get("discountsearchcars"), list):
+                return value["discountsearchcars"]
             for item in value.values():
                 found = cls._find_vehicle_items(item)
                 if found:
@@ -119,60 +161,48 @@ class BrowserMonitor:
         return []
 
     def _normalize_api_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
-        vehicle_id = str(
-            item.get("carCode")
-            or item.get("id")
-            or item.get("carId")
-            or item.get("productCode")
-            or json.dumps(item, ensure_ascii=False, sort_keys=True)
+        vehicle_id = (
+            str(item.get("carProductionNumber") or "").strip()
+            or str(item.get("saleCtyNo") or "").strip()
+            or str(item.get("vinNo") or "").strip()
+            or str(item.get("id") or item.get("carId") or item.get("productCode") or "").strip()
         )
-        name = item.get("carName") or item.get("modelName") or item.get("name") or "미상"
-        trim = item.get("carTrimName") or item.get("trimName") or item.get("trim") or "미상"
-        color = item.get("exteriorColorName") or item.get("colorName") or item.get("color") or "미상"
-        link = item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+        if not vehicle_id:
+            vehicle_id = hashlib.sha256(json.dumps(item, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+
+        car_name = str(item.get("carName") or "캐스퍼 일렉트릭").strip()
+        model_name = str(item.get("splitSaleModelName2") or item.get("modelName") or item.get("saleModelName") or "").strip()
+        if model_name and model_name not in car_name:
+            full_name = f"{car_name} {model_name}"
+        else:
+            full_name = car_name
+
+        trim = str(item.get("carTrimName") or item.get("trimName") or item.get("trim") or "미상").strip()
+
+        ext_color = str(item.get("exteriorColorName") or item.get("colorName") or "미상").strip()
+        int_color = str(item.get("realityInteriorColorName") or item.get("interiorColorName") or "").strip()
+        color = f"{ext_color} (내장: {int_color})" if int_color else ext_color
+
+        raw_price = item.get("finalAmount") or item.get("saleCtyPce") or item.get("carPrice") or item.get("salePrice") or item.get("price") or 0
+        try:
+            price = int(float(str(raw_price).replace(",", "")))
+        except (ValueError, TypeError):
+            price = 0
+
+        delivery_center = str(item.get("deliveryCenterName") or item.get("deliveryCenter") or "미상").strip()
+        options = str(item.get("optionSummary") or "").strip()
+        link = str(item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}").strip()
+
         return {
             "id": vehicle_id,
-            "name": str(name),
-            "trim": str(trim),
-            "color": str(color),
-            "price": item.get("finalAmount") or item.get("salePrice") or item.get("price") or 0,
-            "deliveryCenter": item.get("deliveryCenterName") or item.get("deliveryCenter") or "미상",
-            "link": str(link),
+            "name": full_name,
+            "trim": trim,
+            "color": color,
+            "price": price,
+            "deliveryCenter": delivery_center,
+            "options": options,
+            "link": link,
         }
-
-    async def _fetch_api_items(self, page, area_code: str = "", local_code: str = "") -> List[Dict[str, Any]]:
-        payload = {
-            "exhbNo": self.exhibition_no,
-            "param": {
-                "carCode": "",
-                "deliveryAreaCode": area_code,
-                "deliveryLocalAreaCode": local_code,
-                "pageNo": 1,
-                "pageSize": 100,
-                "sortCode": "10",
-            },
-        }
-        headers = {
-            "accept": "application/json, text/plain, */*",
-            "accept-language": "ko-KR,ko;q=0.9,en;q=0.8",
-            "content-type": "application/json;charset=UTF-8",
-            "origin": "https://casper.hyundai.com",
-            "referer": f"{BASE_URL}?exhbNo={self.exhibition_no}",
-            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
-        }
-        try:
-            response = self._http.post(VEHICLE_API_URL, headers=headers, json=payload, timeout=30)
-            result = response.json()
-            status = response.status_code
-        except (requests.RequestException, ValueError) as error:
-            result = {}
-            status = 0
-            print(f"차량 API 요청 실패: area={area_code or 'ALL'} error={error}")
-        items = self._find_vehicle_items(result)
-        if not items:
-            message = result.get("rspStatus", {}).get("rspMessage", "") if isinstance(result, dict) else ""
-            print(f"차량 API 응답 없음: area={area_code or 'ALL'} status={status} message={message}")
-        return items
 
     async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
         selects = page.locator("select")
@@ -227,69 +257,13 @@ class BrowserMonitor:
                 except Exception:
                     continue
 
-    async def _get_available_sidos(self, page) -> List[str]:
-        result = await page.evaluate("""
-            () => {
-                try {
-                    const raw = window.__NUXT__?.state?.commonModules?.addressSiDoList?.data;
-                    if (Array.isArray(raw)) {
-                        const names = raw
-                            .map(item => item?.codeName || item?.name || item?.label || '')
-                            .filter(Boolean)
-                            .map(String);
-                        return [...new Set(names)];
-                    }
-                } catch (error) {
-                    return [];
-                }
-                return [];
-            }
-        """)
-        if result:
-            return [str(item).strip() for item in result if str(item).strip()]
-
-        return [
-            "서울",
-            "부산",
-            "대구",
-            "인천",
-            "광주",
-            "대전",
-            "울산",
-            "세종",
-            "경기",
-            "강원",
-            "충북",
-            "충남",
-            "전북",
-            "전남",
-            "경북",
-            "경남",
-            "제주",
-        ]
-
-    async def _is_no_result(self, page) -> bool:
-        text = await page.locator("body").inner_text()
-        no_result_patterns = [
-            "선택하신 조건에 맞는 기획전 차량이 없습니다",
-            "해당 조건에 맞는 차량이 없습니다",
-            "검색 결과가 없습니다",
-            "차량이 없습니다",
-        ]
-        normalized = text or ""
-        return any(pattern in normalized for pattern in no_result_patterns)
-
     async def _extract_result_cards(self, page) -> List[Dict[str, Any]]:
         selectors = [
-            "article",
-            "li",
-            "tr",
             ".car-item",
             ".product-item",
             ".vehicle-item",
             "[data-car-code]",
-            "a[href*='vehicle']",
-            "a[href*='car']",
+            "li[data-v-a293210e]",
         ]
 
         collected: List[Dict[str, Any]] = []
@@ -301,13 +275,11 @@ class BrowserMonitor:
             for idx in range(min(count, 50)):
                 card = locators.nth(idx)
                 text = self._clean_option_label(await card.inner_text())
-                if len(text) < 5:
+                if len(text) < 5 or text in {"카드형", "리스트형"}:
                     continue
                 href = None
                 if await card.locator("a").count() > 0:
                     href = await card.locator("a").first.get_attribute("href")
-                if href and ("javascript:" in href.lower() or href.startswith("#")):
-                    href = None
                 item = {
                     "text": text,
                     "href": href or f"{BASE_URL}?exhbNo={self.exhibition_no}",
@@ -321,212 +293,177 @@ class BrowserMonitor:
         if not selects:
             return await self._scan_region_custom_ui(page)
 
-        sido_select = None
-        sigungu_select = None
-        for locator, labels in selects:
-            normalized = [self._clean_option_label(label) for label in labels if self._clean_option_label(label)]
-            if sido_select is None and any(label in SIDO_ORDER for label in normalized):
-                sido_select = locator
-                continue
-            if sigungu_select is None and locator != sido_select:
-                sigungu_select = locator
-
-        if sido_select is None:
-            sido_select = selects[0][0]
-
+        sido_select = selects[0][0]
         sido_options = await self._get_select_options(sido_select)
         sido_candidates = [
             item["label"] for item in sido_options
             if item["label"] in SIDO_ORDER
-        ]
-
-        if not sido_candidates:
-            sido_candidates = [
-                item["label"] for item in sido_options
-                if item["label"] and item["label"] not in {"선택", "전체", "시/도 선택"}
-            ]
+        ] or [item["label"] for item in sido_options if item["label"] and item["label"] not in {"선택", "전체"}]
 
         results: List[Dict[str, Any]] = []
-        seen_ids = self.load_seen()
-
         for sido in sido_candidates:
-            try:
-                await sido_select.select_option(label=sido)
-                await page.wait_for_timeout(900)
-            except Exception:
-                option_values = await self._get_select_options(sido_select)
-                for item in option_values:
-                    if item["label"] == sido:
-                        await sido_select.select_option(value=item["value"] or item["label"])
-                        break
-                await page.wait_for_timeout(900)
-
-            sigun_options = await self._get_sigun_options(sigungu_select)
-            if not sigun_options:
-                sigun_options = [{"label": sido, "value": ""}]
-
-            for sigun in sigun_options:
-                if sigungu_select is not None and sigun["value"]:
-                    await sigungu_select.select_option(value=sigun["value"])
-                print(f"{sido} / {sigun['label']} 조회 중")
-                self._latest_api_items = []
-                await self._click_search(page)
-                await page.wait_for_timeout(1500)
-
-                api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
-                if api_items:
-                    print(f"{sido} / {sigun['label']}: 차량 API {len(api_items)}대 수신")
-                if not api_items and await self._is_no_result(page):
-                    print(f"{sido} / {sigun['label']}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
-                    continue
-                cards = api_items or await self._extract_result_cards(page)
-                for card in cards:
-                    if api_items:
-                        vehicle_id = card["id"]
-                        text = self._clean_option_label(
-                            f"{card['name']} {card['trim']} {card['color']}"
-                        )
-                        link = card["link"]
-                    else:
-                        text = self._clean_option_label(card.get("text", ""))
-                        link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
-                        vehicle_id = self._dedupe_key(text, link)
-                    if not text:
-                        continue
-                    if vehicle_id in seen_ids:
-                        continue
-                    seen_ids.add(vehicle_id)
-                    results.append({
-                        "id": vehicle_id,
-                        "name": card.get("name", text[:80]),
-                        "trim": card.get("trim", "미상"),
-                        "color": card.get("color", "미상"),
-                        "price": card.get("price", 0),
-                        "deliveryCenter": card.get("deliveryCenter", sigun["label"]),
-                        "link": link,
-                        "region": f"{sido} {sigun['label']}",
-                    })
-
-        self.save_seen(sorted(seen_ids))
-        return results
-
-    async def _scan_region_custom_ui(self, page) -> List[Dict[str, Any]]:
-        body_text = await page.locator("body").inner_text()
-        normalized_body = self._clean_option_label(body_text)
-
-        current_region = "서울특별시"
-        if "서울 기준으로 검색합니다" in normalized_body:
-            current_region = "서울"
-        elif "서울특별시 기준으로 검색합니다" in normalized_body:
-            current_region = "서울특별시"
-
-        sidos = await self._get_available_sidos(page)
-        if not sidos:
-            sidos = [current_region]
-            print(f"커스텀 UI에서 시/도를 직접 찾지 못해 기본 지역 {current_region}으로 조회합니다.")
-        else:
-            print(f"페이지 상태에서 확인된 시/도 목록: {sidos}")
-
-        results: List[Dict[str, Any]] = []
-        seen_ids = self.load_seen()
-
-        direct_items = await self._fetch_api_items(page)
-        if not direct_items:
-            for code in SIDO_CODES.values():
-                direct_items.extend(await self._fetch_api_items(page, code))
-        if direct_items:
-            print(f"직접 차량 API 조회 성공: {len(direct_items)}대")
-            for item in direct_items:
-                card = self._normalize_api_item(item)
-                vehicle_id = card["id"]
-                if vehicle_id in seen_ids:
-                    continue
-                seen_ids.add(vehicle_id)
-                results.append({
-                    **card,
-                    "region": card["deliveryCenter"],
-                })
-            self.save_seen(sorted(seen_ids))
-            return results
-
-        for sido in sidos:
-            trigger = page.locator(
-                "button, a, [role='button'], [role='combobox']"
-            ).filter(has_text=re.compile(r"배송\s*지역|배송지|주소|지역\s*변경|변경\s*지역"))
-            print(f"{sido} 지역 변경 버튼 {await trigger.count()}개")
-            if await trigger.count() > 0:
-                try:
-                    await trigger.first.click()
-                    await page.wait_for_timeout(1200)
-                except Exception:
-                    pass
-            else:
-                print("지역 변경 버튼을 찾지 못했습니다.")
-
-            region_match = page.locator(
-                "button, a, li, [role='button'], [role='option']"
-            ).filter(has_text=re.compile(rf"^\s*{re.escape(sido)}\s*$"))
-            print(f"{sido} 지역 선택 요소 {await region_match.count()}개")
-            if await region_match.count() > 0:
-                try:
-                    await region_match.first.click()
-                    await page.wait_for_timeout(900)
-                except Exception:
-                    pass
-            else:
-                print(f"{sido} 지역 선택 요소를 찾지 못했습니다.")
-
-            self._latest_api_items = []
+            await sido_select.select_option(label=sido)
+            await page.wait_for_timeout(900)
             await self._click_search(page)
             await page.wait_for_timeout(1500)
 
-            api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
-            if api_items:
-                print(f"{sido}: 차량 API {len(api_items)}대 수신")
-            if not api_items and await self._is_no_result(page):
-                print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
-                continue
-            cards = api_items or await self._extract_result_cards(page)
-            for card in cards:
-                if api_items:
-                    vehicle_id = card["id"]
-                    text = self._clean_option_label(f"{card['name']} {card['trim']} {card['color']}")
-                    link = card["link"]
-                else:
-                    text = self._clean_option_label(card.get("text", ""))
-                    link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
-                    vehicle_id = self._dedupe_key(text, link)
-                if not text:
-                    continue
-                if vehicle_id in seen_ids:
-                    continue
-                seen_ids.add(vehicle_id)
-                results.append({
-                    "id": vehicle_id,
-                    "name": card.get("name", text[:80]),
-                    "trim": card.get("trim", "미상"),
-                    "color": card.get("color", "미상"),
-                    "price": card.get("price", 0),
-                    "deliveryCenter": card.get("deliveryCenter", sido),
-                    "link": link,
-                    "region": sido,
-                })
+        for item in self._all_captured_api_items:
+            results.append(self._normalize_api_item(item))
+        return results
 
-        self.save_seen(sorted(seen_ids))
+    async def _scan_region_custom_ui(self, page) -> List[Dict[str, Any]]:
+        target_sido = os.getenv("TEST_SIDO", "").strip()
+        if target_sido:
+            sidos = [target_sido]
+            print(f"지정된 단일 지역 검색: {target_sido}")
+        else:
+            sidos = SIDO_ORDER
+            print(f"전국 {len(sidos)}개 시/도 순회 조회를 시작합니다.")
+
+        # If any cars were captured on initial page load (default region)
+        if self._all_captured_api_items:
+            print(f"기본 지역 로드 시 차량 {len(self._all_captured_api_items)}대 감지")
+
+        for sido in sidos:
+            trigger = page.locator("button:has-text('배송지역 변경')")
+            if await trigger.count() == 0:
+                print("배송지역 변경 버튼을 찾지 못했습니다.")
+                break
+
+            try:
+                await trigger.first.click()
+                await page.wait_for_timeout(500)
+            except Exception as exc:
+                print(f"배송지역 변경 클릭 실패: {exc}")
+                break
+
+            dialog = page.locator(".el-dialog").filter(has_text="배송지 변경")
+            if await dialog.count() == 0:
+                dialog = page.locator(".el-dialog:visible")
+            if await dialog.count() == 0:
+                print("배송지 변경 모달을 찾지 못했습니다.")
+                break
+
+            # 1. 시/도 드롭다운 열기 및 선택
+            sido_input = dialog.locator("input[placeholder='시/도']")
+            if await sido_input.count() > 0:
+                try:
+                    await sido_input.click()
+                    await page.wait_for_timeout(250)
+
+                    sido_opt = page.locator(
+                        ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                    ).filter(has_text=re.compile(rf"^\s*{re.escape(sido)}\s*$"))
+
+                    if await sido_opt.count() == 0:
+                        sido_opt = page.locator(
+                            ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                        ).filter(has_text=sido)
+
+                    if await sido_opt.count() > 0:
+                        await sido_opt.first.click()
+                        await page.wait_for_timeout(300)
+                    else:
+                        print(f"[{sido}] 옵션을 찾지 못했습니다.")
+                        continue
+                except Exception as exc:
+                    print(f"[{sido}] 시/도 선택 실패: {exc}")
+                    continue
+
+                # 2. 시/군/구 드롭다운 열기 및 첫 번째 항목 선택
+                sigungu_input = dialog.locator("input[placeholder='시/군/구']")
+                if await sigungu_input.count() > 0:
+                    try:
+                        await sigungu_input.click()
+                        await page.wait_for_timeout(250)
+                        sig_opt = page.locator(
+                            ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                        )
+                        if await sig_opt.count() > 0:
+                            await sig_opt.first.click()
+                            await page.wait_for_timeout(250)
+                    except Exception:
+                        pass
+
+                # 3. 변경 버튼 클릭하여 적용
+                change_btn = dialog.locator("button:has-text('변경')")
+                if await change_btn.count() > 0:
+                    try:
+                        await change_btn.click()
+                        await page.wait_for_timeout(1000)
+                        print(f"[{sido}] 배송지역 변경 완료 (현재 수집 누적: {len(self._all_captured_api_items)}대)")
+                    except Exception as exc:
+                        print(f"[{sido}] 변경 버튼 클릭 실패: {exc}")
+
+        # 정규화 및 중복 제거
+        results: List[Dict[str, Any]] = []
+        seen_run_ids = set()
+
+        for raw_item in self._all_captured_api_items:
+            normalized = self._normalize_api_item(raw_item)
+            vid = normalized["id"]
+            if vid and vid not in seen_run_ids:
+                seen_run_ids.add(vid)
+                results.append(normalized)
+
+        if not results:
+            cards = await self._extract_result_cards(page)
+            for card in cards:
+                text = card.get("text", "")
+                link = card.get("href", "")
+                vid = self._dedupe_key(text, link)
+                if vid not in seen_run_ids:
+                    seen_run_ids.add(vid)
+                    results.append({
+                        "id": vid,
+                        "name": text[:80],
+                        "trim": "미상",
+                        "color": "미상",
+                        "price": 0,
+                        "deliveryCenter": "미상",
+                        "options": "",
+                        "link": link,
+                    })
+
         return results
 
     async def run(self) -> List[Dict[str, Any]]:
         if async_playwright is None:
-            raise RuntimeError("Playwright가 설치되지 않았습니다. pip install playwright 및 playwright install chromium 를 먼저 실행하세요.")
+            raise RuntimeError(
+                "Playwright가 설치되지 않았습니다. pip install playwright 및 playwright install chromium 를 먼저 실행하세요."
+            )
+
+        headless = os.getenv("HEADLESS", "true").strip().lower() not in {"0", "false", "no"}
+        save_debug = os.getenv("DEBUG_ARTIFACTS", "false").strip().lower() in {"1", "true", "yes"}
+
+        launch_args = [
+            "--disable-blink-features=AutomationControlled",
+            "--no-sandbox",
+            "--disable-setuid-sandbox",
+            "--disable-dev-shm-usage",
+        ]
 
         async with async_playwright() as pw:
-            browser = await pw.chromium.launch(headless=True)
-            page = await browser.new_page(viewport={"width": 1600, "height": 1200})
+            browser = await pw.chromium.launch(headless=headless, args=launch_args)
+            context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+                locale="ko-KR",
+                timezone_id="Asia/Seoul",
+            )
+            page = await context.new_page()
             page.on("response", self._capture_vehicle_response)
             try:
                 await self._open_page(page)
-                return await self._scan_region(page)
+                results = await self._scan_region(page)
+                await self._print_network_candidates()
+                if save_debug:
+                    await page.screenshot(path="casper-debug.png", full_page=True)
+                    Path("casper-debug.html").write_text(await page.content(), encoding="utf-8")
+                    print("진단 파일 저장: casper-debug.png, casper-debug.html")
+                return results
             finally:
+                await context.close()
                 await browser.close()
 
     def scan_once(self) -> List[Dict[str, Any]]:

@@ -36,6 +36,25 @@ set TELEGRAM_CHAT_ID=YOUR_CHAT_ID
 python app/monitor.py
 ```
 
+PC에서 GitHub Actions와 같은 URL을 브라우저로 확인하려면 PowerShell에서 다음처럼 실행합니다.
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN=""
+$env:TELEGRAM_CHAT_ID=""
+$env:HEADLESS="false"
+$env:DEBUG_ARTIFACTS="true"
+python -m app.monitor
+```
+
+특정 지역만 빠르게 확인하려면 전체 지역 순회를 생략하고 원하는 시/도만 지정할 수 있습니다. 예를 들어 전북만 확인할 때:
+
+```powershell
+$env:TEST_SIDO="전북"
+python -m app.monitor
+```
+
+실행 URL은 `https://casper.hyundai.com/vehicles/car-list/promotion?exhbNo=E20260902`이며, 실행 후 `casper-debug.png`와 `casper-debug.html`이 생성됩니다.
+
 ## GitHub Actions 자동 실행
 
 워크플로는 10분마다 실행됩니다.

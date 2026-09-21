@@ -2,3 +2,10 @@ __pycache__/
 *.pyc
 .venv/
 .env
+*.png
+*.html
+test_resp_*.json
+dispatch_result.json
+local-test-state.json
+r2.json
+scratch/

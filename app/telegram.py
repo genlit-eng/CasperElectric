@@ -36,6 +36,7 @@ class TelegramNotifier:
         color = car.get("color", "미상")
         price = car.get("price", 0)
         delivery_center = car.get("deliveryCenter", "미상")
+        options = car.get("options", "")
         link = car.get("link", "")
 
         price_text = f"{int(float(price)):,}원" if isinstance(price, (int, float, str)) and str(price).replace(".", "", 1).isdigit() else str(price)
@@ -48,6 +49,8 @@ class TelegramNotifier:
             f"가격: {price_text}\n"
             f"출고센터: {delivery_center}\n"
         )
+        if options:
+            message += f"옵션: {options}\n"
 
         if link:
             message += f"링크: <a href='{link}'>바로 확인</a>"
