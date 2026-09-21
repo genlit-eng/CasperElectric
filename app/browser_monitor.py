@@ -39,6 +39,7 @@ class BrowserMonitor:
     def __init__(self, exhibition_no: str = DEFAULT_EXHIBITION_NO, state_file: str = "state.json") -> None:
         self.exhibition_no = (exhibition_no or DEFAULT_EXHIBITION_NO).strip()
         self.state_file = state_file
+        self._latest_api_items: List[Dict[str, Any]] = []
 
     def load_seen(self) -> set[str]:
         path = Path(self.state_file)
@@ -80,6 +81,49 @@ class BrowserMonitor:
         await page.goto(url, wait_until="domcontentloaded")
         await page.wait_for_timeout(1500)
 
+    async def _capture_vehicle_response(self, response) -> None:
+        if "/exhibition/cars" not in response.url:
+            return
+        try:
+            payload = await response.json()
+        except Exception:
+            return
+        items = []
+        if isinstance(payload, list):
+            items = payload
+        elif isinstance(payload, dict):
+            result = payload.get("result")
+            if isinstance(result, dict):
+                items = result.get("items") or result.get("cars") or result.get("list") or []
+            if not items:
+                data = payload.get("data")
+                if isinstance(data, dict):
+                    items = data.get("items") or data.get("cars") or data.get("list") or []
+        if isinstance(items, list):
+            self._latest_api_items = [item for item in items if isinstance(item, dict)]
+
+    def _normalize_api_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        vehicle_id = str(
+            item.get("carCode")
+            or item.get("id")
+            or item.get("carId")
+            or item.get("productCode")
+            or json.dumps(item, ensure_ascii=False, sort_keys=True)
+        )
+        name = item.get("carName") or item.get("modelName") or item.get("name") or "미상"
+        trim = item.get("carTrimName") or item.get("trimName") or item.get("trim") or "미상"
+        color = item.get("exteriorColorName") or item.get("colorName") or item.get("color") or "미상"
+        link = item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+        return {
+            "id": vehicle_id,
+            "name": str(name),
+            "trim": str(trim),
+            "color": str(color),
+            "price": item.get("finalAmount") or item.get("salePrice") or item.get("price") or 0,
+            "deliveryCenter": item.get("deliveryCenterName") or item.get("deliveryCenter") or "미상",
+            "link": str(link),
+        }
+
     async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
         selects = page.locator("select")
         count = await selects.count()
@@ -105,21 +149,14 @@ class BrowserMonitor:
             result.append({"label": label, "value": value})
         return result
 
-    async def _select_first_sigun(self, sigungu_select) -> Optional[str]:
+    async def _get_sigun_options(self, sigungu_select) -> List[Dict[str, str]]:
         if sigungu_select is None:
-            return None
+            return []
         options = await self._get_select_options(sigungu_select)
-        if not options:
-            return None
-        candidates = [
+        return [
             item for item in options
             if item["label"] not in {"시/군/구 선택", "선택", "전체", ""}
         ]
-        if not candidates:
-            return None
-        first = candidates[0]
-        await sigungu_select.select_option(value=first["value"] or first["label"])
-        return first["label"]
 
     async def _click_search(self, page) -> None:
         selectors = [
@@ -274,37 +311,50 @@ class BrowserMonitor:
                         break
                 await page.wait_for_timeout(900)
 
-            if sigungu_select is not None:
-                sigungu_first = await self._select_first_sigun(sigungu_select)
-                if sigungu_first is not None:
-                    print(f"{sido} / {sigungu_first} 조회 중")
-            await self._click_search(page)
-            await page.wait_for_timeout(1500)
+            sigun_options = await self._get_sigun_options(sigungu_select)
+            if not sigun_options:
+                sigun_options = [{"label": sido, "value": ""}]
 
-            if await self._is_no_result(page):
-                print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
-                continue
+            for sigun in sigun_options:
+                if sigungu_select is not None and sigun["value"]:
+                    await sigungu_select.select_option(value=sigun["value"])
+                print(f"{sido} / {sigun['label']} 조회 중")
+                self._latest_api_items = []
+                await self._click_search(page)
+                await page.wait_for_timeout(1500)
 
-            cards = await self._extract_result_cards(page)
-            for card in cards:
-                text = self._clean_option_label(card.get("text", ""))
-                link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
-                if not text:
+                if await self._is_no_result(page):
+                    print(f"{sido} / {sigun['label']}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
                     continue
-                vehicle_id = self._dedupe_key(text, link)
-                if vehicle_id in seen_ids:
-                    continue
-                seen_ids.add(vehicle_id)
-                results.append({
-                    "id": vehicle_id,
-                    "name": text[:80],
-                    "trim": "미상",
-                    "color": "미상",
-                    "price": 0,
-                    "deliveryCenter": sido,
-                    "link": link,
-                    "region": sido,
-                })
+
+                api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
+                cards = api_items or await self._extract_result_cards(page)
+                for card in cards:
+                    if api_items:
+                        vehicle_id = card["id"]
+                        text = self._clean_option_label(
+                            f"{card['name']} {card['trim']} {card['color']}"
+                        )
+                        link = card["link"]
+                    else:
+                        text = self._clean_option_label(card.get("text", ""))
+                        link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                        vehicle_id = self._dedupe_key(text, link)
+                    if not text:
+                        continue
+                    if vehicle_id in seen_ids:
+                        continue
+                    seen_ids.add(vehicle_id)
+                    results.append({
+                        "id": vehicle_id,
+                        "name": card.get("name", text[:80]),
+                        "trim": card.get("trim", "미상"),
+                        "color": card.get("color", "미상"),
+                        "price": card.get("price", 0),
+                        "deliveryCenter": card.get("deliveryCenter", sigun["label"]),
+                        "link": link,
+                        "region": f"{sido} {sigun['label']}",
+                    })
 
         self.save_seen(sorted(seen_ids))
         return results
@@ -349,6 +399,7 @@ class BrowserMonitor:
                 except Exception:
                     pass
 
+            self._latest_api_items = []
             await self._click_search(page)
             await page.wait_for_timeout(1500)
 
@@ -356,23 +407,29 @@ class BrowserMonitor:
                 print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
                 continue
 
-            cards = await self._extract_result_cards(page)
+            api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
+            cards = api_items or await self._extract_result_cards(page)
             for card in cards:
-                text = self._clean_option_label(card.get("text", ""))
-                link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                if api_items:
+                    vehicle_id = card["id"]
+                    text = self._clean_option_label(f"{card['name']} {card['trim']} {card['color']}")
+                    link = card["link"]
+                else:
+                    text = self._clean_option_label(card.get("text", ""))
+                    link = card.get("href") or f"{BASE_URL}?exhbNo={self.exhibition_no}"
+                    vehicle_id = self._dedupe_key(text, link)
                 if not text:
                     continue
-                vehicle_id = self._dedupe_key(text, link)
                 if vehicle_id in seen_ids:
                     continue
                 seen_ids.add(vehicle_id)
                 results.append({
                     "id": vehicle_id,
-                    "name": text[:80],
-                    "trim": "미상",
-                    "color": "미상",
-                    "price": 0,
-                    "deliveryCenter": sido,
+                    "name": card.get("name", text[:80]),
+                    "trim": card.get("trim", "미상"),
+                    "color": card.get("color", "미상"),
+                    "price": card.get("price", 0),
+                    "deliveryCenter": card.get("deliveryCenter", sido),
                     "link": link,
                     "region": sido,
                 })
@@ -387,6 +444,7 @@ class BrowserMonitor:
         async with async_playwright() as pw:
             browser = await pw.chromium.launch(headless=True)
             page = await browser.new_page(viewport={"width": 1600, "height": 1200})
+            page.on("response", self._capture_vehicle_response)
             try:
                 await self._open_page(page)
                 return await self._scan_region(page)
