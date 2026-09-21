@@ -82,25 +82,31 @@ class BrowserMonitor:
         await page.wait_for_timeout(1500)
 
     async def _capture_vehicle_response(self, response) -> None:
-        if "/exhibition/cars" not in response.url:
-            return
         try:
             payload = await response.json()
         except Exception:
             return
-        items = []
-        if isinstance(payload, list):
-            items = payload
-        elif isinstance(payload, dict):
-            result = payload.get("result")
-            if isinstance(result, dict):
-                items = result.get("items") or result.get("cars") or result.get("list") or []
-            if not items:
-                data = payload.get("data")
-                if isinstance(data, dict):
-                    items = data.get("items") or data.get("cars") or data.get("list") or []
+        items = self._find_vehicle_items(payload)
         if isinstance(items, list):
             self._latest_api_items = [item for item in items if isinstance(item, dict)]
+
+    @classmethod
+    def _find_vehicle_items(cls, value: Any) -> List[Dict[str, Any]]:
+        if isinstance(value, list):
+            if value and all(isinstance(item, dict) for item in value):
+                vehicle_keys = {"carCode", "carName", "modelName", "productCode", "carId"}
+                if any(vehicle_keys.intersection(item.keys()) for item in value):
+                    return value
+            for item in value:
+                found = cls._find_vehicle_items(item)
+                if found:
+                    return found
+        elif isinstance(value, dict):
+            for item in value.values():
+                found = cls._find_vehicle_items(item)
+                if found:
+                    return found
+        return []
 
     def _normalize_api_item(self, item: Dict[str, Any]) -> Dict[str, Any]:
         vehicle_id = str(
@@ -323,11 +329,12 @@ class BrowserMonitor:
                 await self._click_search(page)
                 await page.wait_for_timeout(1500)
 
-                if await self._is_no_result(page):
+                api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
+                if api_items:
+                    print(f"{sido} / {sigun['label']}: 차량 API {len(api_items)}대 수신")
+                if not api_items and await self._is_no_result(page):
                     print(f"{sido} / {sigun['label']}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
                     continue
-
-                api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
                 cards = api_items or await self._extract_result_cards(page)
                 for card in cards:
                     if api_items:
@@ -403,11 +410,12 @@ class BrowserMonitor:
             await self._click_search(page)
             await page.wait_for_timeout(1500)
 
-            if await self._is_no_result(page):
+            api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
+            if api_items:
+                print(f"{sido}: 차량 API {len(api_items)}대 수신")
+            if not api_items and await self._is_no_result(page):
                 print(f"{sido}: 선택하신 조건에 맞는 기획전 차량이 없습니다.")
                 continue
-
-            api_items = [self._normalize_api_item(item) for item in self._latest_api_items]
             cards = api_items or await self._extract_result_cards(page)
             for card in cards:
                 if api_items:
