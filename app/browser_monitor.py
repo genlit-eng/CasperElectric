@@ -33,6 +33,13 @@ SIDO_ORDER = [
     "경남",
     "제주",
 ]
+SIDO_CODES = {
+    "서울": "B", "부산": "C", "대구": "D", "인천": "E", "광주": "F",
+    "대전": "G", "울산": "H", "세종": "J", "경기": "K", "강원": "M",
+    "충북": "N", "충남": "P", "전북": "Q", "전남": "R", "경북": "S",
+    "경남": "T", "제주": "U",
+}
+VEHICLE_API_URL = "https://casper.hyundai.com/gw/wp/product/v2/product/exhibition/cars"
 
 
 class BrowserMonitor:
@@ -129,6 +136,37 @@ class BrowserMonitor:
             "deliveryCenter": item.get("deliveryCenterName") or item.get("deliveryCenter") or "미상",
             "link": str(link),
         }
+
+    async def _fetch_api_items(self, page, area_code: str = "", local_code: str = "") -> List[Dict[str, Any]]:
+        payload = {
+            "exhbNo": self.exhibition_no,
+            "param": {
+                "carCode": "",
+                "deliveryAreaCode": area_code,
+                "deliveryLocalAreaCode": local_code,
+                "pageNo": 1,
+                "pageSize": 100,
+                "sortCode": "10",
+            },
+        }
+        result = await page.evaluate(
+            """
+            async ({url, payload}) => {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {'content-type': 'application/json;charset=UTF-8'},
+                        body: JSON.stringify(payload)
+                    });
+                    return await response.json();
+                } catch (error) {
+                    return {};
+                }
+            }
+            """,
+            {"url": VEHICLE_API_URL, "payload": payload},
+        )
+        return self._find_vehicle_items(result)
 
     async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
         selects = page.locator("select")
@@ -385,6 +423,25 @@ class BrowserMonitor:
 
         results: List[Dict[str, Any]] = []
         seen_ids = self.load_seen()
+
+        direct_items = await self._fetch_api_items(page)
+        if not direct_items:
+            for code in SIDO_CODES.values():
+                direct_items.extend(await self._fetch_api_items(page, code))
+        if direct_items:
+            print(f"직접 차량 API 조회 성공: {len(direct_items)}대")
+            for item in direct_items:
+                card = self._normalize_api_item(item)
+                vehicle_id = card["id"]
+                if vehicle_id in seen_ids:
+                    continue
+                seen_ids.add(vehicle_id)
+                results.append({
+                    **card,
+                    "region": card["deliveryCenter"],
+                })
+            self.save_seen(sorted(seen_ids))
+            return results
 
         for sido in sidos:
             trigger = page.locator(
