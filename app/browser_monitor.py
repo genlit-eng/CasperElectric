@@ -149,7 +149,7 @@ class BrowserMonitor:
                 "sortCode": "10",
             },
         }
-        result = await page.evaluate(
+        response_data = await page.evaluate(
             """
             async ({url, payload}) => {
                 try {
@@ -158,15 +158,24 @@ class BrowserMonitor:
                         headers: {'content-type': 'application/json;charset=UTF-8'},
                         body: JSON.stringify(payload)
                     });
-                    return await response.json();
+                    return {status: response.status, body: await response.text()};
                 } catch (error) {
-                    return {};
+                    return {status: 0, body: '', error: String(error)};
                 }
             }
             """,
             {"url": VEHICLE_API_URL, "payload": payload},
         )
-        return self._find_vehicle_items(result)
+        try:
+            result = json.loads(response_data.get("body", "{}"))
+        except (TypeError, ValueError):
+            result = {}
+        items = self._find_vehicle_items(result)
+        if not items:
+            status = response_data.get("status", 0)
+            message = result.get("rspStatus", {}).get("rspMessage", "") if isinstance(result, dict) else ""
+            print(f"차량 API 응답 없음: area={area_code or 'ALL'} status={status} message={message}")
+        return items
 
     async def _find_selects(self, page) -> List[Tuple[Any, List[str]]]:
         selects = page.locator("select")
