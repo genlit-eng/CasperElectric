@@ -36,18 +36,9 @@ SIDO_ORDER = [
     "제주",
 ]
 
-# 각 시/도별 출고센터 소재지 및 대표 시/군 매핑
-# (가나다순 첫 시/군 선택 시 보조금 상한가 제한으로 인스퍼레이션 등 고가 트림 누락 방지)
-PRIMARY_SIGUN_MAP = {
-    "전북": "전주시",  # 전주출고센터 (고창군 등 선택 시 상한가 3,482만원으로 3,679만원 인스퍼레이션 누락 방지)
-    "경북": "칠곡군",  # 칠곡출고센터
-    "충북": "옥천군",  # 옥천출고센터
-    "전남": "담양군",  # 담양출고센터
-    "경남": "함안군",  # 함안출고센터 / 영남출고센터
-    "강원": "원주시",  # 원주출고센터
-    "충남": "아산시",  # 아산출고센터
-    "경기": "시흥시",  # 시흥/신갈/남양출고센터
-}
+# 전기차 구매보조금 신청 지역 고정 설정 (경북 구미시)
+SUBSIDY_SIDO = os.getenv("SUBSIDY_SIDO", "경북")
+SUBSIDY_SIGUN = os.getenv("SUBSIDY_SIGUN", "구미시")
 
 
 class BrowserMonitor:
@@ -428,9 +419,7 @@ class BrowserMonitor:
                     print(f"[{sido}] 시/도 선택 실패: {exc}")
                     continue
 
-                sigun_to_select = target_sigun or PRIMARY_SIGUN_MAP.get(sido, "")
-
-                # 1-2. 배송지 시/군/구 선택
+                # 1-2. 배송지 시/군/구 선택 (첫 번째 도시 선택, 환경변수 target_sigun이 있을 때만 해당 시/군 선택)
                 sigungu_input = dialog.locator("input[placeholder='시/군/구']")
                 if await sigungu_input.count() > 0:
                     try:
@@ -439,48 +428,53 @@ class BrowserMonitor:
                         sig_opts = page.locator(
                             ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
                         )
-                        if sigun_to_select and await sig_opts.filter(has_text=sigun_to_select).count() > 0:
-                            await sig_opts.filter(has_text=sigun_to_select).first.click()
+                        if target_sigun and await sig_opts.filter(has_text=target_sigun).count() > 0:
+                            await sig_opts.filter(has_text=target_sigun).first.click()
                         elif await sig_opts.count() > 0:
                             await sig_opts.first.click()
                         await page.wait_for_timeout(250)
                     except Exception:
                         pass
 
-                # 2. 전기차 구매보조금 신청 지역 동기화 (보조금 상한가 및 지역 필터링 확장)
+                # 2. 전기차 구매보조금 신청 지역 (경북 구미시로 고정)
                 sub_sido_input = dialog.locator("input[placeholder='시/도 선택']")
                 if await sub_sido_input.count() > 0:
                     try:
-                        await sub_sido_input.click()
-                        await page.wait_for_timeout(200)
+                        current_sub_sido = await sub_sido_input.input_value()
+                        if current_sub_sido != SUBSIDY_SIDO:
+                            await sub_sido_input.click()
+                            await page.wait_for_timeout(200)
 
-                        sub_sido_opt = page.locator(
-                            ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
-                        ).filter(has_text=re.compile(rf"^\s*{re.escape(sido)}\s*$"))
-                        if await sub_sido_opt.count() == 0:
                             sub_sido_opt = page.locator(
                                 ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
-                            ).filter(has_text=sido)
+                            ).filter(has_text=re.compile(rf"^\s*{re.escape(SUBSIDY_SIDO)}\s*$"))
+                            if await sub_sido_opt.count() == 0:
+                                sub_sido_opt = page.locator(
+                                    ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                                ).filter(has_text=SUBSIDY_SIDO)
 
-                        if await sub_sido_opt.count() > 0:
-                            await sub_sido_opt.first.click()
-                            await page.wait_for_timeout(250)
+                            if await sub_sido_opt.count() > 0:
+                                await sub_sido_opt.first.click()
+                                await page.wait_for_timeout(250)
 
-                            sub_sig_input = dialog.locator("input[placeholder='시/군 선택']")
-                            if await sub_sig_input.count() > 0:
+                        sub_sig_input = dialog.locator("input[placeholder='시/군 선택']")
+                        if await sub_sig_input.count() > 0:
+                            current_sub_sig = await sub_sig_input.input_value()
+                            if current_sub_sig != SUBSIDY_SIGUN:
                                 await sub_sig_input.click()
                                 await page.wait_for_timeout(200)
                                 sub_sig_opts = page.locator(
                                     ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
                                 )
-                                if sigun_to_select and await sub_sig_opts.filter(has_text=sigun_to_select).count() > 0:
-                                    await sub_sig_opts.filter(has_text=sigun_to_select).first.click()
+                                sub_sig_target = sub_sig_opts.filter(has_text=SUBSIDY_SIGUN)
+                                if await sub_sig_target.count() > 0:
+                                    await sub_sig_target.first.click()
                                 elif await sub_sig_opts.count() > 0:
                                     await sub_sig_opts.first.click()
                                 await page.wait_for_timeout(200)
                     except Exception as exc:
                         if self._verbose():
-                            print(f"[{sido}] 보조금 지역 동기화 참고: {exc}")
+                            print(f"[{sido}] 보조금 지역({SUBSIDY_SIDO} {SUBSIDY_SIGUN}) 설정 참고: {exc}")
 
                 # 3. 변경 버튼 클릭하여 적용
                 change_btn = dialog.locator("button:has-text('변경')")
