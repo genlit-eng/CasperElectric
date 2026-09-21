@@ -376,9 +376,6 @@ class BrowserMonitor:
         elif "서울특별시 기준으로 검색합니다" in normalized_body:
             current_region = "서울특별시"
 
-        if "선택하신 조건에 맞는 기획전 차량이 없습니다." in body_text and "기준으로 검색합니다" not in body_text:
-            return []
-
         sidos = await self._get_available_sidos(page)
         if not sidos:
             sidos = [current_region]
