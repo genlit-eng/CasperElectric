@@ -387,7 +387,7 @@ class BrowserMonitor:
         seen_ids = self.load_seen()
 
         for sido in sidos:
-            trigger = page.locator("button, a, div").filter(has_text="배송지역 변경")
+            trigger = page.locator("button, a, [role='button']").filter(has_text="배송지역 변경")
             if await trigger.count() > 0:
                 try:
                     await trigger.first.click()
@@ -395,13 +395,18 @@ class BrowserMonitor:
                 except Exception:
                     pass
 
-            region_match = page.locator("button, a, li, div, span").filter(has_text=sido)
+            region_match = page.locator(
+                "button, a, li, [role='button'], [role='option']"
+            ).filter(has_text=re.compile(rf"^\s*{re.escape(sido)}\s*$"))
+            print(f"{sido} 지역 선택 요소 {await region_match.count()}개")
             if await region_match.count() > 0:
                 try:
                     await region_match.first.click()
                     await page.wait_for_timeout(900)
                 except Exception:
                     pass
+            else:
+                print(f"{sido} 지역 선택 요소를 찾지 못했습니다.")
 
             self._latest_api_items = []
             await self._click_search(page)
