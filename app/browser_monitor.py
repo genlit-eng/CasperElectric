@@ -190,7 +190,31 @@ class BrowserMonitor:
             price = 0
 
         delivery_center = str(item.get("deliveryCenterName") or item.get("deliveryCenter") or "미상").strip()
-        options = str(item.get("optionSummary") or "").strip()
+
+        # 세부 옵션 추출 (매칭용 raw_options 및 표시용 options)
+        choice_options_display = []
+        raw_options = []
+        for opt in item.get("carChoiceOption") or []:
+            if isinstance(opt, dict) and opt.get("choiceOptionName"):
+                opt_name = str(opt.get("choiceOptionName")).strip()
+                if opt_name:
+                    raw_options.append(opt_name)
+                    opt_price = opt.get("choiceOptionPrice")
+                    if opt_price and str(opt_price).isdigit() and int(opt_price) > 0:
+                        pval = int(opt_price)
+                        pstr = f"{pval//10000}만원" if pval >= 10000 else f"{pval:,}원"
+                        choice_options_display.append(f"{opt_name}({pstr})")
+                    else:
+                        choice_options_display.append(opt_name)
+
+        if not raw_options and item.get("optionSummary"):
+            for o in str(item.get("optionSummary")).split(","):
+                clean_o = o.strip()
+                if clean_o:
+                    raw_options.append(clean_o)
+                    choice_options_display.append(clean_o)
+
+        options_text = ", ".join(choice_options_display) if choice_options_display else ""
         link = str(item.get("detailUrl") or f"{BASE_URL}?exhbNo={self.exhibition_no}").strip()
 
         return {
@@ -200,7 +224,8 @@ class BrowserMonitor:
             "color": color,
             "price": price,
             "deliveryCenter": delivery_center,
-            "options": options,
+            "options": options_text,
+            "raw_options": raw_options,
             "link": link,
         }
 

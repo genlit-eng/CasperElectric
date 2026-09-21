@@ -1,5 +1,6 @@
+import html
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 import requests
 
@@ -30,28 +31,117 @@ class TelegramNotifier:
         response.raise_for_status()
         return True
 
+    @staticmethod
+    def classify_target(car: Dict[str, Any]) -> int:
+        """
+        차량 트림 및 옵션을 검사하여 3가지 카테고리로 분류:
+        1: 조건 100% 일치 (지정 필수 옵션만 정확히 장착, 추가 옵션 없음)
+        2: 조건 충족 + 추가 옵션 포함 (지정 필수 옵션을 모두 포함하고, 추가 옵션이 더 있음)
+        3: 조건 미충족 (일반 차량)
+
+        [타겟 조건]
+        - 조건 1: 트림이 "라운지" 이고 옵션에 "파킹 어시스트" 포함
+        - 조건 2: 트림이 "인스퍼레이션" 이고 옵션에 "파킹 어시스트", "컴포트", "익스테리어 디자인" 포함
+        """
+        trim = str(car.get("trim", "")).replace(" ", "").lower()
+
+        raw_opts = car.get("raw_options")
+        if raw_opts is None:
+            opts_str = str(car.get("options", ""))
+            raw_opts = [o.split("(")[0].strip() for o in opts_str.split(",") if o.strip()]
+
+        norm_opts: List[str] = [
+            opt.replace(" ", "").replace("익세테리어", "익스테리어").lower()
+            for opt in raw_opts
+            if opt
+        ]
+
+        def has_parking(opts: List[str]) -> bool:
+            return any("파킹" in o and "어시스트" in o for o in opts)
+
+        def has_comfort(opts: List[str]) -> bool:
+            return any("컴포트" in o for o in opts)
+
+        def has_exterior(opts: List[str]) -> bool:
+            return any("익스테리어" in o for o in opts)
+
+        # 조건 1: 라운지 트림
+        if "라운지" in trim:
+            if has_parking(norm_opts):
+                if len(norm_opts) == 1:
+                    return 1
+                else:
+                    return 2
+
+        # 조건 2: 인스퍼레이션 트림
+        if "인스퍼레이션" in trim:
+            if has_parking(norm_opts) and has_comfort(norm_opts) and has_exterior(norm_opts):
+                if len(norm_opts) == 3:
+                    return 1
+                else:
+                    return 2
+
+        return 3
+
     def build_message(self, car: Dict[str, Any]) -> str:
-        name = car.get("name", "미상")
-        trim = car.get("trim", "미상")
-        color = car.get("color", "미상")
+        name = html.escape(str(car.get("name", "미상")).strip())
+        trim = html.escape(str(car.get("trim", "미상")).strip())
+        color = html.escape(str(car.get("color", "미상")).strip())
         price = car.get("price", 0)
-        delivery_center = car.get("deliveryCenter", "미상")
+        delivery_center = html.escape(str(car.get("deliveryCenter", "미상")).strip())
         options = car.get("options", "")
-        link = car.get("link", "")
+        options_text = html.escape(str(options).strip()) if options else "없음 (기본 사양)"
+        link = str(car.get("link", "")).strip() or "https://casper.hyundai.com"
 
         price_text = f"{int(float(price)):,}원" if isinstance(price, (int, float, str)) and str(price).replace(".", "", 1).isdigit() else str(price)
 
-        message = (
-            f"<b>신규 캐스퍼 등록</b>\n"
-            f"차량: <b>{name}</b>\n"
-            f"트림: {trim}\n"
-            f"색상: {color}\n"
-            f"가격: {price_text}\n"
-            f"출고센터: {delivery_center}\n"
-        )
-        if options:
-            message += f"옵션: {options}\n"
+        category = self.classify_target(car)
 
-        if link:
-            message += f"링크: <a href='{link}'>바로 확인</a>"
-        return message
+        if category == 1:
+            # 1순위: 지정 조건 100% 일치 (원하는 옵션만 정확히 장착)
+            msg = (
+                f"🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n"
+                f"🔴 <b>[특급 매칭] 100% 완벽 일치 차량!</b> 🔴\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"<blockquote>🎯 <b>원하시는 조건과 정확히 일치합니다! (추가옵션 없음)</b>\n\n"
+                f"🚗 <b>차량:</b> {name}\n"
+                f"🏷️ <b>트림:</b> <b>{trim}</b>\n"
+                f"🎨 <b>색상:</b> {color}\n"
+                f"💰 <b>가격:</b> <b>{price_text}</b>\n"
+                f"🏢 <b>출고센터:</b> {delivery_center}\n"
+                f"✨ <b>선택옵션:</b> <b>{options_text}</b>\n"
+                f"</blockquote>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👉 <a href=\"{link}\"><b>🔥 [지금 바로 확인 및 계약하기]</b></a>"
+            )
+        elif category == 2:
+            # 2순위: 조건 충족 + 추가 옵션 포함
+            msg = (
+                f"⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐\n"
+                f"🟡 <b>[조건 충족] 관심 차량 (추가옵션 포함)</b> 🟡\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"<blockquote>✨ <b>필수 조건을 모두 만족하며, 추가 옵션이 있습니다.</b>\n\n"
+                f"🚗 <b>차량:</b> {name}\n"
+                f"🏷️ <b>트림:</b> <b>{trim}</b>\n"
+                f"🎨 <b>색상:</b> {color}\n"
+                f"💰 <b>가격:</b> <b>{price_text}</b>\n"
+                f"🏢 <b>출고센터:</b> {delivery_center}\n"
+                f"✨ <b>선택옵션:</b> {options_text}\n"
+                f"</blockquote>\n"
+                f"━━━━━━━━━━━━━━━━━━━━━\n"
+                f"👉 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>"
+            )
+        else:
+            # 3순위: 조건 미충족 일반 차량
+            msg = (
+                f"📋 <b>[일반 등록] 캐스퍼 신규 차량</b>\n"
+                f"차량: <b>{name}</b>\n"
+                f"트림: {trim}\n"
+                f"색상: {color}\n"
+                f"가격: {price_text}\n"
+                f"출고센터: {delivery_center}\n"
+                f"옵션: {options_text}\n"
+                f"링크: <a href=\"{link}\">바로 확인</a>"
+            )
+
+        return msg
