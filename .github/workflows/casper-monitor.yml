@@ -2,8 +2,6 @@ name: Casper vehicle monitor
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '*/3 * * * *'
 
 concurrency:
   group: casper-monitor
@@ -56,6 +54,7 @@ jobs:
               echo "No state change to commit."
             else
               git commit -m "Update Casper monitor state"
+              git pull --rebase origin main
               git push
             fi
           else
