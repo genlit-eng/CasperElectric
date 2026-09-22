@@ -98,17 +98,22 @@ class TelegramNotifier:
         category = self.classify_target(car)
 
         contract_url = str(car.get("contract_url") or "").strip()
-
-        contract_target = contract_url if contract_url else link
+        has_distinct_contract = bool(contract_url and contract_url != link)
 
         if category == 1:
             # 1순위: 지정 조건 100% 일치 (원하는 옵션만 정확히 장착)
-            links_block = (
-                f"⚡ <a href=\"{contract_target}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n"
-                f"<i>(배송지·보조금·공채: 구미시 / 다자녀 2자녀 / 노후차 교체)</i>\n\n"
-                f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
-                f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
-            )
+            if has_distinct_contract:
+                links_block = (
+                    f"⚡ <a href=\"{contract_url}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n"
+                    f"<i>(배송지·보조금·공채: 구미시 / 다자녀 2자녀 / 노후차 교체)</i>\n\n"
+                    f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
+                    f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
+                )
+            else:
+                links_block = (
+                    f"🔗 <a href=\"{link}\"><b>🔥 [차량 상세 정보 확인 및 계약하기]</b></a>\n"
+                    f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
+                )
 
             msg = (
                 f"🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨🚨\n"
@@ -127,12 +132,18 @@ class TelegramNotifier:
             )
         elif category == 2:
             # 2순위: 조건 충족 + 추가 옵션 포함
-            links_block = (
-                f"⚡ <a href=\"{contract_target}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n"
-                f"<i>(배송지·보조금·공채: 구미시 / 다자녀 2자녀 / 노후차 교체)</i>\n\n"
-                f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
-                f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
-            )
+            if has_distinct_contract:
+                links_block = (
+                    f"⚡ <a href=\"{contract_url}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n"
+                    f"<i>(배송지·보조금·공채: 구미시 / 다자녀 2자녀 / 노후차 교체)</i>\n\n"
+                    f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
+                    f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
+                )
+            else:
+                links_block = (
+                    f"🔗 <a href=\"{link}\"><b>🔥 [차량 상세 정보 확인 및 계약하기]</b></a>\n"
+                    f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
+                )
 
             msg = (
                 f"⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐⭐\n"
@@ -151,11 +162,14 @@ class TelegramNotifier:
             )
         else:
             # 3순위: 조건 미충족 일반 차량 (크로스, 프리미엄 등 모든 신규 등록 차량)
-            links_block = (
-                f"⚡ <a href=\"{contract_target}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n\n"
-                f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
-                f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
-            )
+            if has_distinct_contract:
+                links_block = (
+                    f"⚡ <a href=\"{contract_url}\"><b>🔥 [⚡ 원클릭 자동 견적/계약 바로가기]</b></a>\n\n"
+                    f"🔗 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>\n"
+                    f"💡 <i>(한정 재고 특성상 타인이 먼저 계약/선점한 경우 상세 페이지가 마감되어 메인 화면으로 이동될 수 있습니다)</i>"
+                )
+            else:
+                links_block = f"👉 <a href=\"{link}\"><b>[차량 상세 정보 확인하기]</b></a>"
 
             msg = (
                 f"📋 <b>[신규 등록] 캐스퍼 신규 차량</b>\n"

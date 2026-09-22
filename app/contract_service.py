@@ -106,7 +106,28 @@ class ContractService:
                 # --- STEP 4: 등록비용 (공채: 경북 구미시) ---
                 print("[ContractService] Step 4 등록비용 공채 설정...")
                 await pick_select("시/도", "경북")
-                await pick_select("시/군", "구미시")
+                await page.wait_for_timeout(800)
+
+                try:
+                    bond_sigun = page.locator("input[placeholder*='선택하세요'], input[value*='경산시'], input[value*='구미시']").first
+                    if await bond_sigun.count() == 0 or not await bond_sigun.is_visible():
+                        all_inps = page.locator("input.el-input__inner")
+                        if await all_inps.count() >= 3:
+                            bond_sigun = all_inps.nth(2)
+
+                    if await bond_sigun.count() > 0 and await bond_sigun.is_visible():
+                        await bond_sigun.click()
+                        await page.wait_for_timeout(500)
+                        opt = page.locator(
+                            ".el-select-dropdown:not([style*='display: none']) .el-select-dropdown__item"
+                        ).filter(has_text=re.compile(r"구미"))
+                        if await opt.count() > 0:
+                            await opt.first.scroll_into_view_if_needed()
+                            await opt.first.click()
+                            await page.wait_for_timeout(400)
+                            print("[ContractService] Step 4 공채 구미시 선택 성공")
+                except Exception as e:
+                    print(f"[ContractService] Step 4 공채 시/군(구미시) 선택 예외: {e}")
 
                 next_btn = page.locator("button:has-text('다음')").first
                 if await next_btn.count() > 0 and await next_btn.is_visible():
