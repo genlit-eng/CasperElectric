@@ -87,15 +87,15 @@
         await dismissModal();
     }
 
-    // --- STEP 3: 전기차 구매보조금 (경북 구미시, 다자녀 2자녀, 노후차 교체) ---
-    updateToast('⚡ Step 3: 보조금/다자녀/노후차 설정...');
+    // --- STEP 3: 전기차 구매보조금 (경북 구미시, 노후차 교체) ---
+    updateToast('⚡ Step 3: 보조금/노후차 설정...');
     await pickSelectByPlaceholder("시/도", "경북");
     await pickSelectByPlaceholder("시/군", "구미시");
 
     const checkboxes = Array.from(document.querySelectorAll('.el-checkbox, label')).filter(el => el.offsetParent !== null);
     for (let cb of checkboxes) {
         const txt = cb.innerText.trim();
-        if ((txt.includes("다자녀") && txt.includes("2자녀")) || txt.includes("내연기관")) {
+        if (txt.includes("내연기관")) {
             if (!cb.classList.contains("is-checked") && !cb.querySelector(".is-checked")) {
                 cb.click();
                 await sleep(250);
