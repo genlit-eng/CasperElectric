@@ -99,35 +99,146 @@ class BrowserMonitor:
     def _clean_option_label(value: str) -> str:
         return re.sub(r"\s+", " ", value).strip()
 
-    async def _open_page(self, page):
+    async def _open_page(self, page) -> bool:
         url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
         print(f"페이지 접속: {url}")
         await page.goto(url, wait_until="domcontentloaded")
         await page.wait_for_timeout(2000)
 
-        # 기획전이 종료되어 캐스퍼 메인 등으로 리다이렉트되었거나 잘못된 경우
-        if "promotion" not in page.url or "exhbNo=" not in page.url:
-            print(f"기존 기획전({self.exhibition_no}) 종료 또는 리다이렉트 감지. 메인 페이지에서 최신 기획전 링크 탐색 중...")
-            try:
-                if page.url.rstrip("/") != "https://casper.hyundai.com":
-                    await page.goto("https://casper.hyundai.com", wait_until="domcontentloaded")
-                    await page.wait_for_timeout(1500)
+        # 기획전 활성 여부 확인: 배송지역 변경 버튼·차량 카드가 감지되면 활성
+        if await self._check_exhibition_active(page):
+            return True
 
-                links = await page.locator("a[href*='promotion?exhbNo=E']").all()
-                for l in links:
-                    href = (await l.get_attribute("href")) or ""
-                    match = re.search(r"exhbNo=(E[A-Za-z0-9]+)", href)
-                    if match:
-                        new_exhb = match.group(1)
-                        print(f"[최신 기획전 자동 발견] {new_exhb}")
-                        self.exhibition_no = new_exhb
-                        url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
-                        print(f"새 기획전 페이지 접속: {url}")
-                        await page.goto(url, wait_until="domcontentloaded")
-                        await page.wait_for_timeout(2000)
-                        break
-            except Exception as exc:
-                print(f"최신 기획전 자동 탐색 중 오류: {exc}")
+        print(
+            f"기획전({self.exhibition_no}) 비활성 감지 "
+            "(배송지역 변경 버튼·차량 목록 미감지). 최신 기획전 자동 탐색 중..."
+        )
+        new_exhb = await self._discover_exhibition_from_homepage(page)
+        if not new_exhb:
+            print(
+                "현재 활성 기획전을 찾지 못했습니다. "
+                "(기획전 미개설 기간이거나 배너가 아직 게시되지 않았을 수 있음)"
+            )
+            return False
+
+        print(f"[최신 기획전 자동 발견] {new_exhb}")
+        self.exhibition_no = new_exhb
+        self._all_captured_api_items.clear()
+        url = f"{BASE_URL}?exhbNo={self.exhibition_no}"
+        print(f"새 기획전 페이지 접속: {url}")
+        await page.goto(url, wait_until="domcontentloaded")
+        await page.wait_for_timeout(2000)
+        return await self._check_exhibition_active(page)
+
+    async def _check_exhibition_active(self, page) -> bool:
+        """배송지역 변경 버튼이나 차량 카드가 있는지 확인합니다."""
+        # URL이 promotion 페이지가 아니면 비활성 (리다이렉트됨)
+        if "promotion" not in page.url:
+            return False
+
+        # 배송지역 변경 버튼이 있으면 활성
+        if await page.locator("button:has-text('배송지역 변경')").count() > 0:
+            return True
+
+        # 차량 카드 요소가 있으면 활성
+        if await page.locator(
+            ".car-item, .product-item, .vehicle-item, [data-car-code]"
+        ).count() > 0:
+            return True
+
+        return False
+
+    async def _discover_exhibition_from_homepage(self, page) -> Optional[str]:
+        """
+        캐스퍼 메인 페이지 상단 메뉴를 호버하여 '특별 기획전 확인하기'
+        배너/링크에서 최신 기획전 번호(exhbNo)를 자동 감지합니다.
+        기획전 미개설 기간에는 배너가 없으므로 None을 반환합니다.
+        """
+        try:
+            print("[자동 탐색] 캐스퍼 메인 페이지에서 기획전 배너 탐색 시작...")
+            await page.goto(
+                "https://casper.hyundai.com", wait_until="domcontentloaded"
+            )
+            await page.wait_for_timeout(2000)
+
+            # 상단 GNB 메뉴를 호버해 하위 메뉴와 기획전 배너를 노출
+            for selector in (
+                "header nav li > a",
+                "header li > a",
+                ".gnb li > a",
+                "nav li > a",
+            ):
+                nav_items = page.locator(selector)
+                nav_count = await nav_items.count()
+                if nav_count == 0:
+                    continue
+
+                for i in range(min(nav_count, 10)):
+                    try:
+                        item = nav_items.nth(i)
+                        if not await item.is_visible():
+                            continue
+                        await item.hover()
+                        await page.wait_for_timeout(800)
+
+                        found = await self._find_promotion_link_on_page(page)
+                        if found:
+                            return found
+                    except Exception:
+                        continue
+                break  # 유효한 nav selector에서 탐색 완료 후 종료
+
+            # 메뉴가 이미 펼쳐져 있거나 구조가 다른 경우 페이지 내 링크도 확인
+            found = await self._find_promotion_link_on_page(page)
+            if found:
+                return found
+
+            print(
+                "[자동 탐색] 기획전 배너/링크를 찾지 못했습니다. "
+                "(기획전 미개설 기간)"
+            )
+        except Exception as exc:
+            print(f"[자동 탐색] 최신 기획전 탐색 중 오류: {exc}")
+        return None
+
+    async def _find_promotion_link_on_page(self, page) -> Optional[str]:
+        """페이지 내 promotion 링크 또는 '기획전' 텍스트/이미지 링크에서 exhbNo를 추출."""
+        # href에 promotion + exhbNo가 있는 링크 직접 탐색
+        promo = page.locator("a[href*='promotion'][href*='exhbNo=E']:visible")
+        for i in range(await promo.count()):
+            href = (await promo.nth(i).get_attribute("href")) or ""
+            m = re.search(r"exhbNo=(E[A-Za-z0-9]+)", href)
+            if m:
+                print(f"[자동 탐색] 기획전 링크 발견: {m.group(1)}")
+                return m.group(1)
+
+        # '기획전' 텍스트 또는 이미지 alt가 포함된 보이는 링크
+        kihak = page.locator(
+            "a:has-text('기획전'):visible, a:has(img[alt*='기획전']):visible"
+        )
+        if await kihak.count() > 0:
+            try:
+                href = (await kihak.first.get_attribute("href")) or ""
+                m = re.search(r"exhbNo=(E[A-Za-z0-9]+)", href)
+                if m:
+                    print(f"[자동 탐색] '기획전' 링크에서 발견: {m.group(1)}")
+                    return m.group(1)
+                # href에 exhbNo가 없으면 클릭하여 이동 후 URL에서 추출
+                await kihak.first.click()
+                await page.wait_for_timeout(2500)
+                m = re.search(r"exhbNo=(E[A-Za-z0-9]+)", page.url)
+                if m:
+                    print(f"[자동 탐색] 기획전 배너 클릭 → URL에서 발견: {m.group(1)}")
+                    return m.group(1)
+                # 실패 시 홈으로 복귀
+                await page.goto(
+                    "https://casper.hyundai.com", wait_until="domcontentloaded"
+                )
+                await page.wait_for_timeout(1000)
+            except Exception:
+                pass
+
+        return None
 
     async def _capture_vehicle_response(self, response) -> None:
         url_lower = response.url.lower()
@@ -601,7 +712,9 @@ class BrowserMonitor:
             await page.route("**/exhibition/cars/**", self._handle_cars_route)
             page.on("response", self._capture_vehicle_response)
             try:
-                await self._open_page(page)
+                if not await self._open_page(page):
+                    print("활성 기획전이 없어 차량 검색을 종료합니다.")
+                    return []
                 results = await self._scan_region(page)
 
                 # 매칭 차량(특급 매칭 및 관심 차량) 발견 시 동일 세션에서 즉시 원클릭 자동 견적/계약 URL 생성
