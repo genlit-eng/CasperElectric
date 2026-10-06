@@ -11,7 +11,7 @@ class ContractService:
     @staticmethod
     async def configure_estimation(page: Page) -> bool:
         """
-        견적 페이지에서 사용자 지정 조건(경북 구미시, 다자녀 2자녀, 노후차 교체, 일반, 공채 구미시)을 자동 세팅합니다.
+        견적 페이지에서 사용자 지정 조건(경북 구미시, 노후차 교체, 일반, 공채 구미시)을 자동 세팅합니다.
         PC(단일 화면) 및 모바일(5단계 위저드) 환경을 모두 지원합니다.
         """
         try:
@@ -75,17 +75,10 @@ class ContractService:
                         await confirm_btn.click()
                         await page.wait_for_timeout(500)
 
-                # --- STEP 3: 전기차 구매보조금 (경북 구미시, 다자녀 2자녀, 노후차 교체) ---
+                # --- STEP 3: 전기차 구매보조금 (경북 구미시, 노후차 교체) ---
                 print("[ContractService] Step 3 구매보조금 설정...")
                 await pick_select("시/도", "경북")
                 await pick_select("시/군", "구미시")
-
-                dajanyeo = page.locator("label:has-text('다자녀 가구 (2자녀)'), .el-checkbox:has-text('다자녀 가구 (2자녀)')")
-                if await dajanyeo.count() > 0 and await dajanyeo.first.is_visible():
-                    is_chk = await dajanyeo.first.evaluate("el => el.classList.contains('is-checked')")
-                    if not is_chk:
-                        await dajanyeo.first.click()
-                        await page.wait_for_timeout(300)
 
                 naeyeon = page.locator("label:has-text('기존 내연기관차 교체'), .el-checkbox:has-text('기존 내연기관차 교체')")
                 if await naeyeon.count() > 0 and await naeyeon.first.is_visible():
@@ -146,18 +139,7 @@ class ContractService:
 
         # PC 단일 화면 환경
         print("[ContractService] PC 견적 화면 옵션 자동 설정 시작...")
-        # 1. 추가 보조금 대상 (국고) 체크박스: 다자녀 가구 (2자녀), 기존 내연기관차 교체
-        try:
-            dajanyeo = page.locator("label:has-text('다자녀 가구 (2자녀)'), .el-checkbox:has-text('다자녀 가구 (2자녀)')")
-            if await dajanyeo.count() > 0:
-                is_checked = await dajanyeo.first.evaluate("el => el.classList.contains('is-checked')")
-                if not is_checked:
-                    await dajanyeo.first.click()
-                    await page.wait_for_timeout(300)
-                    print("[ContractService] 다자녀 가구 (2자녀) 선택 완료")
-        except Exception as e:
-            print(f"[ContractService] 다자녀 가구 선택 실패: {e}")
-
+        # 1. 추가 보조금 대상 (국고) 체크박스: 기존 내연기관차 교체
         try:
             naeyeon = page.locator("label:has-text('기존 내연기관차 교체'), .el-checkbox:has-text('기존 내연기관차 교체')")
             if await naeyeon.count() > 0:
@@ -283,7 +265,7 @@ class ContractService:
             est_url = page.url
             print(f"[ContractService] 견적 페이지 진입 성공: {est_url}")
 
-            # 옵션 자동 세팅 (경북 구미시, 다자녀 2자녀, 노후차 교체)
+            # 옵션 자동 세팅 (경북 구미시, 노후차 교체)
             await cls.configure_estimation(page)
             await page.wait_for_timeout(1000)
 
